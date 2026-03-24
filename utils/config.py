@@ -120,6 +120,28 @@ def save_start_minimized(enabled: bool):
     _write_config(cfg)
 
 
+def load_github_repo() -> str:
+    cfg = _read_config()
+    return cfg.get("github_repo", "")
+
+
+def save_github_repo(repo: str):
+    cfg = _read_config()
+    cfg["github_repo"] = repo
+    _write_config(cfg)
+
+
+def load_auto_update() -> bool:
+    cfg = _read_config()
+    return cfg.get("auto_update", True)
+
+
+def save_auto_update(enabled: bool):
+    cfg = _read_config()
+    cfg["auto_update"] = enabled
+    _write_config(cfg)
+
+
 # ------------------------------------------------------------------ #
 #  History & cost tracking
 # ------------------------------------------------------------------ #

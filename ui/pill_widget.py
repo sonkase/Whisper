@@ -33,8 +33,10 @@ from ui.animations import (
 from utils.config import (
     load_theme, save_theme, save_transcription, load_shortcuts,
     load_post_processing, load_paste_sound, load_start_minimized,
+    load_github_repo, load_auto_update,
 )
 from utils.hotkeys import HotkeyManager
+from core.updater import UpdateChecker
 
 THEME_COLORS = {
     "Midnight":  QColor(20, 20, 30),
@@ -57,7 +59,7 @@ class PillWidget(QWidget):
 
     # Panel is wider than the pill, centered below it
     PANEL_WIDTH = 440
-    PANEL_SPACE = 750
+    PANEL_SPACE = 870
 
 
     def __init__(self, api_key: str = ""):
@@ -115,6 +117,7 @@ class PillWidget(QWidget):
 
         self._init_hotkeys()
         self._init_tray_icon()
+        self._init_topmost_enforcer()
 
         self._paint_timer = QTimer(self)
         self._paint_timer.timeout.connect(self._tick)
@@ -296,6 +299,33 @@ class PillWidget(QWidget):
         self._tray_icon.activated.connect(self._on_tray_activated)
         self._tray_icon.show()
 
+    # ------------------------------------------------------------------ #
+    #  Always-on-top enforcer (Windows API)
+    # ------------------------------------------------------------------ #
+
+    def _init_topmost_enforcer(self):
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.timeout.connect(self._enforce_topmost)
+        self._topmost_timer.start(5000)
+
+    def _enforce_topmost(self):
+        user32 = ctypes.windll.user32
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOACTIVATE = 0x0010
+        HWND_TOPMOST = -1
+        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+
+        # Enforce on main pill (if visible and not minimized)
+        if self.isVisible() and not self.isMinimized() and self._our_hwnd:
+            user32.SetWindowPos(self._our_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+
+        # Enforce on compact pill (if visible)
+        if self._compact_pill.isVisible():
+            compact_hwnd = int(self._compact_pill.winId())
+            if compact_hwnd:
+                user32.SetWindowPos(compact_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self._tray_toggle_window()
@@ -370,11 +400,35 @@ class PillWidget(QWidget):
         if not hasattr(self, '_startup_done'):
             self._startup_done = True
             self._run_startup_glow()
+            # Auto-check for updates silently
+            self._auto_check_update()
 
     def hideEvent(self, event):
         super().hideEvent(event)
         if hasattr(self, '_tray_icon'):
             self._update_tray_text()
+
+    # ------------------------------------------------------------------ #
+    #  Auto-update check at startup
+    # ------------------------------------------------------------------ #
+
+    def _auto_check_update(self):
+        repo = load_github_repo()
+        if not repo or not load_auto_update():
+            return
+        self._startup_update_checker = UpdateChecker(repo, self)
+        self._startup_update_checker.update_available.connect(
+            self._on_startup_update_available)
+        self._startup_update_checker.start()
+
+    def _on_startup_update_available(self, tag, download_url, notes):
+        if hasattr(self, '_tray_icon') and self._tray_icon.isVisible():
+            self._tray_icon.showMessage(
+                "Aggiornamento disponibile",
+                f"Whisper {tag} è disponibile. Apri le impostazioni per aggiornare.",
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
 
     def _start_focus_tracker(self):
         self._focus_timer = QTimer(self)

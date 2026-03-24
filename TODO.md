@@ -34,11 +34,5 @@ Un timer massimo configurabile (es. 5 min) per evitare registrazioni accidentali
 ### 8. Whisper locale (offline)
 Supporto opzionale per `faster-whisper` o `whisper.cpp` per trascrizione offline — zero costi API, funziona senza internet. Richiede download del modello (~1-3GB).
 
-### 9. Tray icon
-Invece di minimizzare nella taskbar, un'icona nella system tray con menu contestuale (start/stop, settings, quit). Più pulito e standard per app always-on.
-
-### 10. Multi-monitor awareness
+### 9. Multi-monitor awareness
 Posizionare la pill/compact pill sullo schermo dove si trova il mouse, non sempre sul primario.
-
-### 11. Aggiornamento automatico
-Check versione su GitHub + notifica quando c'è un update disponibile.
