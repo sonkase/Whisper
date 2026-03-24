@@ -12,9 +12,10 @@ class ToastWidget(QWidget):
     RADIUS = 10
     MARGIN = 8
 
-    def __init__(self, bg_color: QColor, parent=None):
+    def __init__(self, bg_color: QColor, parent=None, glow_color: QColor = None):
         super().__init__(parent)
         self._bg_color = QColor(bg_color)
+        self._glow_color = QColor(glow_color) if glow_color else QColor(255, 200, 50)
         self._text = ""
         self._opacity = 0.0
 
@@ -183,11 +184,11 @@ class ToastWidget(QWidget):
             clip.addRoundedRect(rect, r, r)
             p.setClipPath(clip)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(QColor(255, 200, 50, self._glow_opacity)))
+            p.setBrush(QBrush(QColor(self._glow_color.red(), self._glow_color.green(), self._glow_color.blue(), self._glow_opacity)))
             p.drawRect(rect)
             p.restore()
             # Yellow border
-            pen = QPen(QColor(255, 200, 50, self._glow_opacity))
+            pen = QPen(QColor(self._glow_color.red(), self._glow_color.green(), self._glow_color.blue(), self._glow_opacity))
             pen.setWidthF(1.5)
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)

@@ -21,13 +21,15 @@ from core.post_processor import PostProcessorWorker
 from ui.settings_panel import SettingsPanel
 from ui.compact_pill import CompactPill
 from ui.toast_widget import ToastWidget
+from ui.update_window import UpdateWindow
 from utils.config import (
     load_theme, save_theme, save_transcription, load_shortcuts,
     load_post_processing, load_paste_sound, load_start_minimized,
     load_auto_update,
 )
 from utils.hotkeys import HotkeyManager
-from core.updater import UpdateChecker, GITHUB_REPO
+from core.updater import (UpdateChecker, UpdateDownloader,
+                          apply_update_and_restart, APP_VERSION, GITHUB_REPO)
 
 THEME_COLORS = {
     "Midnight":  QColor(20, 20, 30),
@@ -80,6 +82,16 @@ class PillWidget(QWidget):
         self._init_tray_icon()
         self._init_topmost_enforcer()
         self._start_focus_tracker()
+
+        # Startup toast — let user know the app is running in tray (green glow)
+        self._startup_toast = ToastWidget(
+            self._bg_color, glow_color=QColor(50, 200, 100))
+        QTimer.singleShot(800, lambda: self._startup_toast.show_message(
+            f"Whisper v{APP_VERSION} è in esecuzione", 3000))
+
+        # Auto-update check (works even when starting minimized in tray)
+        self._startup_done = True
+        QTimer.singleShot(2000, self._auto_check_update)
 
     # ------------------------------------------------------------------ #
     #  Window setup
@@ -175,7 +187,7 @@ class PillWidget(QWidget):
         p.setPen(QColor(255, 255, 255, 160))
         p.drawText(title_rect,
                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                   "Whisper")
+                   f"Whisper v{APP_VERSION}")
         p.end()
 
     # ------------------------------------------------------------------ #
@@ -231,7 +243,14 @@ class PillWidget(QWidget):
             }
             QMenu::item { padding: 6px 24px; }
             QMenu::item:selected { background: rgba(80,140,255,0.3); }
+            QMenu::item:disabled { color: rgba(255,255,255,0.35); }
         """)
+
+        version_action = QAction(f"Whisper v{APP_VERSION}", self)
+        version_action.setEnabled(False)
+        tray_menu.addAction(version_action)
+
+        tray_menu.addSeparator()
 
         self._tray_show_action = QAction("Impostazioni", self)
         self._tray_show_action.triggered.connect(self._tray_toggle_window)
@@ -296,9 +315,6 @@ class PillWidget(QWidget):
         if hasattr(self, '_tray_icon'):
             self._update_tray_text()
         self._settings_panel.refresh_data()
-        if not hasattr(self, '_startup_done'):
-            self._startup_done = True
-            self._auto_check_update()
 
     def closeEvent(self, event):
         event.ignore()
@@ -322,11 +338,35 @@ class PillWidget(QWidget):
         self._startup_update_checker.start()
 
     def _on_startup_update_available(self, tag, download_url, notes):
+        # Show update progress window
+        self._update_window = UpdateWindow(self._bg_color)
+        self._update_window.show_update(tag)
+
+        # Auto-download and install
+        self._auto_downloader = UpdateDownloader(download_url, self)
+        self._auto_downloader.progress.connect(self._on_auto_download_progress)
+        self._auto_downloader.finished.connect(
+            lambda path: self._on_auto_download_finished(path, tag))
+        self._auto_downloader.error.connect(self._on_auto_download_error)
+        self._auto_downloader.start()
+
+    def _on_auto_download_progress(self, percent):
+        if hasattr(self, '_update_window'):
+            self._update_window.set_progress(percent)
+
+    def _on_auto_download_finished(self, temp_path, tag):
+        if hasattr(self, '_update_window'):
+            self._update_window.set_installing()
+        apply_update_and_restart(temp_path)
+
+    def _on_auto_download_error(self, message):
+        if hasattr(self, '_update_window'):
+            self._update_window.dismiss()
         if hasattr(self, '_tray_icon') and self._tray_icon.isVisible():
             self._tray_icon.showMessage(
-                "Aggiornamento disponibile",
-                f"Whisper {tag} \u00e8 disponibile. Apri le impostazioni per aggiornare.",
-                QSystemTrayIcon.MessageIcon.Information,
+                "Aggiornamento fallito",
+                message,
+                QSystemTrayIcon.MessageIcon.Warning,
                 5000,
             )
 

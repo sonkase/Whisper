@@ -25,10 +25,6 @@ from utils.config import (
     load_start_minimized, save_start_minimized,
     load_auto_update, save_auto_update,
 )
-from core.updater import (
-    APP_VERSION, GITHUB_REPO, UpdateChecker, UpdateDownloader,
-    apply_update_and_restart,
-)
 
 try:
     from zoneinfo import ZoneInfo
@@ -384,8 +380,8 @@ class SettingsPanel(QWidget):
     theme_changed = pyqtSignal(str)
     shortcuts_changed = pyqtSignal(dict)
 
-    TARGET_HEIGHT = 720
-    MESSAGE_HEIGHT = 720
+    TARGET_HEIGHT = 760
+    MESSAGE_HEIGHT = 760
 
     def __init__(self, parent: QWidget, theme_name: str = "Midnight",
                  embedded: bool = False):
@@ -535,12 +531,6 @@ class SettingsPanel(QWidget):
         ml.addLayout(opts_grid)
 
         # Separator
-        ml.addSpacing(4)
-        ml.addWidget(self._sep())
-
-        # Update section
-        self._build_update_section(ml)
-
         ml.addSpacing(4)
         ml.addWidget(self._sep())
 
@@ -922,155 +912,6 @@ class SettingsPanel(QWidget):
         if key:
             save_api_key(key)
             self.api_key_saved.emit(key)
-
-    # ------------------------------------------------------------------ #
-    #  Auto-update
-    # ------------------------------------------------------------------ #
-
-    def _build_update_section(self, layout):
-        update_label = QLabel(f"Aggiornamento  ·  v{APP_VERSION}")
-        update_label.setStyleSheet("color: rgba(255,255,255,0.55); font-size: 13px;")
-        layout.addWidget(update_label)
-        self._version_label = update_label
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        self._check_update_btn = QPushButton("Controlla aggiornamenti")
-        self._check_update_btn.setFixedHeight(28)
-        self._check_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._check_update_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(80,140,255,0.2);
-                border: 1px solid rgba(80,140,255,0.35);
-                border-radius: 4px;
-                color: rgba(255,255,255,0.85);
-                font-size: 11px; padding: 0 12px;
-            }
-            QPushButton:hover {
-                background: rgba(80,140,255,0.35);
-                border: 1px solid rgba(80,140,255,0.5);
-            }
-            QPushButton:disabled {
-                background: rgba(255,255,255,0.05);
-                border: 1px solid rgba(255,255,255,0.08);
-                color: rgba(255,255,255,0.3);
-            }
-        """)
-        self._check_update_btn.clicked.connect(self._check_for_updates)
-        btn_row.addWidget(self._check_update_btn)
-
-        self._update_status = QLabel("")
-        self._update_status.setStyleSheet(
-            "color: rgba(255,255,255,0.5); font-size: 11px;")
-        btn_row.addWidget(self._update_status, 1)
-        layout.addLayout(btn_row)
-
-        # Download + install button (hidden by default)
-        self._install_row = QHBoxLayout()
-        self._install_row.setSpacing(8)
-
-        self._install_btn = QPushButton("Scarica e installa")
-        self._install_btn.setFixedHeight(28)
-        self._install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._install_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(50,200,100,0.2);
-                border: 1px solid rgba(50,200,100,0.4);
-                border-radius: 4px;
-                color: rgba(255,255,255,0.9);
-                font-size: 11px; padding: 0 12px;
-            }
-            QPushButton:hover {
-                background: rgba(50,200,100,0.35);
-                border: 1px solid rgba(50,200,100,0.55);
-            }
-            QPushButton:disabled {
-                background: rgba(255,255,255,0.05);
-                border: 1px solid rgba(255,255,255,0.08);
-                color: rgba(255,255,255,0.3);
-            }
-        """)
-        self._install_btn.clicked.connect(self._download_and_install)
-        self._install_btn.hide()
-        self._install_row.addWidget(self._install_btn)
-
-        self._progress_label = QLabel("")
-        self._progress_label.setStyleSheet(
-            "color: rgba(255,255,255,0.5); font-size: 11px;")
-        self._install_row.addWidget(self._progress_label, 1)
-        layout.addLayout(self._install_row)
-
-        self._update_checker = None
-        self._update_downloader = None
-        self._pending_download_url = ""
-        self._pending_tag = ""
-
-    def _check_for_updates(self):
-        self._check_update_btn.setEnabled(False)
-        self._update_status.setText("Controllo in corso...")
-        self._update_status.setStyleSheet(
-            "color: rgba(255,255,255,0.5); font-size: 11px;")
-        self._install_btn.hide()
-
-        self._update_checker = UpdateChecker(GITHUB_REPO, self)
-        self._update_checker.update_available.connect(self._on_update_available)
-        self._update_checker.no_update.connect(self._on_no_update)
-        self._update_checker.error.connect(self._on_update_error)
-        self._update_checker.start()
-
-    def _on_update_available(self, tag, download_url, notes):
-        self._check_update_btn.setEnabled(True)
-        self._update_status.setText(f"Disponibile {tag}")
-        self._update_status.setStyleSheet(
-            "color: rgba(50,200,100,0.9); font-size: 11px;")
-        self._pending_download_url = download_url
-        self._pending_tag = tag
-        self._install_btn.setText(f"Scarica e installa {tag}")
-        self._install_btn.show()
-
-    def _on_no_update(self):
-        self._check_update_btn.setEnabled(True)
-        self._update_status.setText("Sei aggiornato!")
-        self._update_status.setStyleSheet(
-            "color: rgba(50,200,100,0.9); font-size: 11px;")
-
-    def _on_update_error(self, message):
-        self._check_update_btn.setEnabled(True)
-        self._update_status.setText(message)
-        self._update_status.setStyleSheet(
-            "color: rgba(255,100,100,0.8); font-size: 11px;")
-
-    def _download_and_install(self):
-        if not self._pending_download_url:
-            return
-        self._install_btn.setEnabled(False)
-        self._progress_label.setText("Download 0%...")
-
-        self._update_downloader = UpdateDownloader(
-            self._pending_download_url, self)
-        self._update_downloader.progress.connect(self._on_download_progress)
-        self._update_downloader.finished.connect(self._on_download_finished)
-        self._update_downloader.error.connect(self._on_download_error)
-        self._update_downloader.start()
-
-    def _on_download_progress(self, percent):
-        self._progress_label.setText(f"Download {percent}%...")
-
-    def _on_download_finished(self, temp_path):
-        self._progress_label.setText("Installazione...")
-        success = apply_update_and_restart(temp_path)
-        if not success:
-            self._progress_label.setText(
-                "Aggiornamento manuale: non in modalità .exe")
-            self._progress_label.setStyleSheet(
-                "color: rgba(255,180,80,0.8); font-size: 11px;")
-            self._install_btn.setEnabled(True)
-
-    def _on_download_error(self, message):
-        self._progress_label.setText(f"Errore: {message}")
-        self._progress_label.setStyleSheet(
-            "color: rgba(255,100,100,0.8); font-size: 11px;")
-        self._install_btn.setEnabled(True)
 
     # ------------------------------------------------------------------ #
     #  Shortcuts
