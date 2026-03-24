@@ -9,7 +9,7 @@ class UpdateWindow(QWidget):
     """Frameless overlay window that shows update download progress."""
 
     WIDTH = 320
-    HEIGHT = 120
+    HEIGHT = 90
     RADIUS = 16
     SHADOW = 12
 
@@ -65,13 +65,13 @@ class UpdateWindow(QWidget):
 
     def set_progress(self, percent: int):
         self._progress = min(100, max(0, percent))
-        self._status = f"Download {self._progress}%"
         self.update()
 
     def set_installing(self):
         self._progress = 100
         self._status = "Installazione..."
         self.update()
+
 
     def dismiss(self):
         if self._fade_anim:
@@ -158,18 +158,19 @@ class UpdateWindow(QWidget):
                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                    self._title)
 
-        # Status text
-        status_rect = QRectF(rect.left() + 20, rect.top() + 44, rect.width() - 40, 18)
-        font2 = QFont("Segoe UI", 9)
-        p.setFont(font2)
-        p.setPen(QColor(255, 255, 255, 130))
-        p.drawText(status_rect,
-                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                   self._status)
+        # Status text (only shown during install phase)
+        if self._status == "Installazione...":
+            status_rect = QRectF(rect.left() + 20, rect.top() + 44, rect.width() - 40, 18)
+            font2 = QFont("Segoe UI", 9)
+            p.setFont(font2)
+            p.setPen(QColor(255, 255, 255, 130))
+            p.drawText(status_rect,
+                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                       self._status)
 
         # Progress bar background
         bar_x = rect.left() + 20
-        bar_y = rect.top() + 72
+        bar_y = rect.top() + 52
         bar_w = rect.width() - 40
         bar_h = 6
         bar_rect = QRectF(bar_x, bar_y, bar_w, bar_h)
@@ -201,14 +202,5 @@ class UpdateWindow(QWidget):
             p.drawRect(fill_rect)
 
             p.setClipping(False)
-
-        # Percentage text
-        pct_rect = QRectF(bar_x, bar_y + 12, bar_w, 16)
-        font3 = QFont("Segoe UI", 8)
-        p.setFont(font3)
-        p.setPen(QColor(255, 255, 255, 90))
-        p.drawText(pct_rect,
-                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
-                   f"{self._progress}%")
 
         p.end()
