@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 GITHUB_REPO = "sonkase/Whisper"
 
 
@@ -154,6 +154,11 @@ def apply_update_and_restart(new_exe_path: str):
         return False
 
     pid = os.getpid()
+
+    # VBScript wrapper — runs completely hidden, then launches the new exe
+    vbs_fd, vbs_path = tempfile.mkstemp(suffix=".vbs", prefix="whisper_updater_")
+    bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="whisper_updater_")
+
     bat_content = f'''@echo off
 :wait
 tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
@@ -168,18 +173,20 @@ if errorlevel 1 (
     move /y "{new_exe_path}" "{current_exe}"
 )
 start "" "{current_exe}"
+del "{vbs_path}"
 del "%~f0"
 '''
 
-    bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="whisper_updater_")
+    vbs_content = f'CreateObject("WScript.Shell").Run """" & "{bat_path}" & """", 0, False'
+
     with os.fdopen(bat_fd, "w") as f:
         f.write(bat_content)
+    with os.fdopen(vbs_fd, "w") as f:
+        f.write(vbs_content)
 
-    # Use CREATE_NO_WINDOW to avoid terminal flash
-    CREATE_NO_WINDOW = 0x08000000
     subprocess.Popen(
-        ["cmd.exe", "/c", bat_path],
-        creationflags=CREATE_NO_WINDOW,
+        ["wscript.exe", vbs_path],
+        creationflags=0x00000008,  # DETACHED_PROCESS
         close_fds=True,
     )
 
