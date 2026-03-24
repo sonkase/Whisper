@@ -44,6 +44,10 @@ class CompactPill(QWidget):
         m = self.MARGIN
         self.setFixedSize(self.WIDTH + 2 * m, self.HEIGHT + 2 * m)
 
+        self._start_glow_opacity = 0
+        self._start_glow_anim = None
+        self._fade_anim = None
+
         self._paint_timer = QTimer(self)
         self._paint_timer.timeout.connect(self.update)
 
@@ -69,6 +73,15 @@ class CompactPill(QWidget):
     #  Public API
     # ------------------------------------------------------------------ #
 
+    @pyqtProperty(int)
+    def startGlowOpacity(self):
+        return self._start_glow_opacity
+
+    @startGlowOpacity.setter
+    def startGlowOpacity(self, v):
+        self._start_glow_opacity = v
+        self.update()
+
     def start_recording(self):
         self._state = "recording"
         self._recording_start = time.time()
@@ -78,10 +91,13 @@ class CompactPill(QWidget):
         self._pulse_phase = 0.0
         self._glow_opacity = 0
         self._success_glow_opacity = 0
+        self._start_glow_opacity = 0
+        self.setWindowOpacity(1.0)
         self._position_on_screen()
         self.show()
         self._paint_timer.start(16)
         self._pulse_timer.start(30)
+        self._run_start_glow()
 
     def enter_transcribing(self):
         """Switch to transcribing state (loading animation)."""
@@ -90,18 +106,31 @@ class CompactPill(QWidget):
         self._pulse_phase = 0.0
 
     def enter_success(self):
-        """Flash green then auto-hide."""
+        """Flash green sweep, then fade out the whole window."""
         self._state = "success"
         self._pulse_timer.stop()
         self._glow_opacity = 0
+        self.setWindowOpacity(1.0)
 
+        # Green sweep
         anim = QPropertyAnimation(self, b"successGlowOpacity")
-        anim.setDuration(1400)
+        anim.setDuration(800)
         anim.setStartValue(0)
         anim.setEndValue(255)
-        anim.finished.connect(self._on_success_done)
+        anim.finished.connect(self._fade_out_window)
         self._success_anim = anim
         anim.start()
+
+    def _fade_out_window(self):
+        """Quick fade out of the entire compact pill."""
+        self._success_anim = None
+        fade = QPropertyAnimation(self, b"windowOpacity")
+        fade.setDuration(250)
+        fade.setStartValue(1.0)
+        fade.setEndValue(0.0)
+        fade.finished.connect(self._on_success_done)
+        self._fade_anim = fade
+        fade.start()
 
     def stop(self):
         """Immediately hide (e.g. discard or error)."""
@@ -111,6 +140,10 @@ class CompactPill(QWidget):
         if self._success_anim:
             self._success_anim.stop()
             self._success_anim = None
+        if self._fade_anim:
+            self._fade_anim.stop()
+            self._fade_anim = None
+        self.setWindowOpacity(1.0)
         self.hide()
 
     def set_bg_color(self, color: QColor):
@@ -144,10 +177,19 @@ class CompactPill(QWidget):
         elif self._state == "transcribing":
             self._glow_opacity = int(25 * (0.5 + 0.5 * math.sin(self._pulse_phase)))
 
+    def _run_start_glow(self):
+        anim = QPropertyAnimation(self, b"startGlowOpacity")
+        anim.setDuration(1000)
+        anim.setKeyValueAt(0.0, 0)
+        anim.setKeyValueAt(0.15, 80)
+        anim.setKeyValueAt(0.5, 40)
+        anim.setKeyValueAt(1.0, 0)
+        self._start_glow_anim = anim
+        anim.start()
+
     def _on_success_done(self):
         self._success_anim = None
         self._paint_timer.stop()
-        self.hide()
         self._state = "idle"
         self.closed.emit()
 
@@ -196,6 +238,23 @@ class CompactPill(QWidget):
         # Success sweep glow
         if self._success_glow_opacity > 0:
             self._paint_success_sweep(p, pill, r)
+
+        # Start recording glow (red, fades out)
+        if self._start_glow_opacity > 0:
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(pill, r, r)
+            p.setClipPath(clip)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor(255, 60, 60, self._start_glow_opacity)))
+            p.drawRect(pill)
+            p.restore()
+            # Red border
+            pen = QPen(QColor(255, 60, 60, self._start_glow_opacity))
+            pen.setWidthF(1.5)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(pill, r, r)
 
         # Border
         pen = QPen(QColor(255, 255, 255, 40))

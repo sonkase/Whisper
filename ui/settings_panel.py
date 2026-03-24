@@ -18,7 +18,11 @@ from PyQt6.QtWidgets import (
 )
 import qtawesome as qta
 
-from utils.config import save_api_key, load_history, load_shortcuts, save_shortcuts
+from utils.config import (
+    save_api_key, load_history, load_shortcuts, save_shortcuts,
+    load_post_processing, save_post_processing,
+    load_paste_sound, save_paste_sound,
+)
 
 try:
     from zoneinfo import ZoneInfo
@@ -27,7 +31,7 @@ except ImportError:
 
 IT_TZ = ZoneInfo("Europe/Rome")
 
-ICON_COLOR = '#ffffff60'
+ICON_COLOR = QColor(255, 255, 255, 140)
 
 
 def _create_check_icon_path():
@@ -268,13 +272,114 @@ class KeyCaptureButton(QPushButton):
         super().focusOutEvent(event)
 
 
+SPECIAL_KEY_LABELS = {
+    "PAUSE": "Pause", "SCROLL_LOCK": "Scroll Lock",
+    "INSERT": "Insert", "HOME": "Home", "END": "End",
+    "PAGE_UP": "Page Up", "PAGE_DOWN": "Page Down",
+    "NUM_LOCK": "Num Lock", "CAPS_LOCK": "Caps Lock",
+    "F1": "F1", "F2": "F2", "F3": "F3", "F4": "F4",
+    "F5": "F5", "F6": "F6", "F7": "F7", "F8": "F8",
+    "F9": "F9", "F10": "F10", "F11": "F11", "F12": "F12",
+}
+
+# Qt key code -> internal name
+QT_SPECIAL_MAP = {
+    Qt.Key.Key_Pause: "PAUSE", Qt.Key.Key_ScrollLock: "SCROLL_LOCK",
+    Qt.Key.Key_Insert: "INSERT", Qt.Key.Key_Home: "HOME",
+    Qt.Key.Key_End: "END", Qt.Key.Key_PageUp: "PAGE_UP",
+    Qt.Key.Key_PageDown: "PAGE_DOWN", Qt.Key.Key_NumLock: "NUM_LOCK",
+    Qt.Key.Key_CapsLock: "CAPS_LOCK",
+    Qt.Key.Key_F1: "F1", Qt.Key.Key_F2: "F2", Qt.Key.Key_F3: "F3",
+    Qt.Key.Key_F4: "F4", Qt.Key.Key_F5: "F5", Qt.Key.Key_F6: "F6",
+    Qt.Key.Key_F7: "F7", Qt.Key.Key_F8: "F8", Qt.Key.Key_F9: "F9",
+    Qt.Key.Key_F10: "F10", Qt.Key.Key_F11: "F11", Qt.Key.Key_F12: "F12",
+}
+
+
+class SpecialKeyCaptureButton(QPushButton):
+    """Button that captures a special key (Pause, Scroll Lock, F-keys, etc.)."""
+    key_captured = pyqtSignal(str)
+
+    def __init__(self, key: str, parent=None):
+        label = SPECIAL_KEY_LABELS.get(key.upper(), key)
+        super().__init__(label, parent)
+        self._listening = False
+        self._current_key = key.upper()
+        self.setFixedHeight(26)
+        self.setMinimumWidth(80)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._apply_style(False)
+        self.clicked.connect(self._start_listening)
+
+    def _apply_style(self, active: bool):
+        if active:
+            self.setStyleSheet("""
+                QPushButton {
+                    background: rgba(80,140,255,0.3);
+                    border: 1px solid rgba(80,140,255,0.6);
+                    border-radius: 4px;
+                    color: rgba(255,255,255,0.95);
+                    font-size: 11px; font-weight: bold;
+                    padding: 0 8px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QPushButton {
+                    background: rgba(255,255,255,0.10);
+                    border: 1px solid rgba(255,255,255,0.18);
+                    border-radius: 4px;
+                    color: rgba(255,255,255,0.85);
+                    font-size: 11px; font-weight: bold;
+                    padding: 0 8px;
+                }
+                QPushButton:hover {
+                    background: rgba(255,255,255,0.16);
+                    border: 1px solid rgba(255,255,255,0.30);
+                }
+            """)
+
+    def _start_listening(self):
+        self._listening = True
+        self.setText("\u2026")
+        self._apply_style(True)
+        self.setFocus()
+
+    def set_key(self, key: str):
+        self._current_key = key.upper()
+        self._listening = False
+        self.setText(SPECIAL_KEY_LABELS.get(self._current_key, self._current_key))
+        self._apply_style(False)
+
+    def keyPressEvent(self, event):
+        if self._listening:
+            qt_key = event.key()
+            name = QT_SPECIAL_MAP.get(qt_key)
+            if name:
+                self._current_key = name
+                self._listening = False
+                self.setText(SPECIAL_KEY_LABELS.get(name, name))
+                self._apply_style(False)
+                self.clearFocus()
+                self.key_captured.emit(name)
+                return
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        if self._listening:
+            self._listening = False
+            self.setText(SPECIAL_KEY_LABELS.get(self._current_key, self._current_key))
+            self._apply_style(False)
+        super().focusOutEvent(event)
+
+
 class SettingsPanel(QWidget):
     api_key_saved = pyqtSignal(str)
     theme_changed = pyqtSignal(str)
     shortcuts_changed = pyqtSignal(dict)
 
-    TARGET_HEIGHT = 720
-    MESSAGE_HEIGHT = 720
+    TARGET_HEIGHT = 900
+    MESSAGE_HEIGHT = 900
 
     def __init__(self, parent: QWidget, theme_name: str = "Midnight"):
         super().__init__(parent)
@@ -283,6 +388,7 @@ class SettingsPanel(QWidget):
         self._fade_anim = None
         self._current_theme = theme_name
         self._in_message_view = False
+        self._full_history = []
         self.setFixedHeight(0)
         self._build_ui()
 
@@ -353,10 +459,12 @@ class SettingsPanel(QWidget):
         theme_label = QLabel("Tema")
         theme_label.setStyleSheet("color: rgba(255,255,255,0.55); font-size: 13px;")
         theme_col.addWidget(theme_label)
-        theme_row = QHBoxLayout()
-        theme_row.setSpacing(8)
         self._theme_btns = {}
-        for name in THEME_ORDER:
+        theme_row1 = QHBoxLayout()
+        theme_row1.setSpacing(8)
+        theme_row2 = QHBoxLayout()
+        theme_row2.setSpacing(8)
+        for i, name in enumerate(THEME_ORDER):
             btn = QPushButton(self)
             btn.setFixedSize(24, 24)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -364,15 +472,19 @@ class SettingsPanel(QWidget):
             is_sel = name == self._current_theme
             btn.setStyleSheet(self._theme_btn_style(THEME_PREVIEW[name], is_sel))
             btn.clicked.connect(lambda ch, n=name: self._select_theme(n))
-            theme_row.addWidget(btn)
+            if i < 4:
+                theme_row1.addWidget(btn)
+            else:
+                theme_row2.addWidget(btn)
             self._theme_btns[name] = btn
-        theme_col.addLayout(theme_row)
+        theme_row2.addStretch()
+        theme_col.addLayout(theme_row1)
+        theme_col.addLayout(theme_row2)
         row2.addLayout(theme_col)
         row2.addStretch()
 
         autostart_col = QVBoxLayout()
         autostart_col.setSpacing(4)
-        autostart_col.addSpacing(18)
         self._autostart_cb = QCheckBox("Avvia all'avvio di Windows")
         self._autostart_cb.setChecked(self._is_autostart_enabled())
         check_img = _create_check_icon_path()
@@ -392,6 +504,45 @@ class SettingsPanel(QWidget):
         """)
         self._autostart_cb.toggled.connect(self._toggle_autostart)
         autostart_col.addWidget(self._autostart_cb)
+
+        self._pp_cb = QCheckBox("Correggi testo con AI")
+        self._pp_cb.setChecked(load_post_processing())
+        self._pp_cb.setStyleSheet(f"""
+            QCheckBox {{ color: rgba(255,255,255,0.6); font-size: 12px; spacing: 6px; }}
+            QCheckBox::indicator {{
+                width: 14px; height: 14px;
+                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 3px; background: rgba(255,255,255,0.06);
+            }}
+            QCheckBox::indicator:checked {{
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.5);
+                image: url({check_img});
+            }}
+            QCheckBox::indicator:hover {{ border: 1px solid rgba(255,255,255,0.5); }}
+        """)
+        self._pp_cb.toggled.connect(save_post_processing)
+        autostart_col.addWidget(self._pp_cb)
+
+        self._sound_cb = QCheckBox("Suono dopo incolla")
+        self._sound_cb.setChecked(load_paste_sound())
+        self._sound_cb.setStyleSheet(f"""
+            QCheckBox {{ color: rgba(255,255,255,0.6); font-size: 12px; spacing: 6px; }}
+            QCheckBox::indicator {{
+                width: 14px; height: 14px;
+                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 3px; background: rgba(255,255,255,0.06);
+            }}
+            QCheckBox::indicator:checked {{
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.5);
+                image: url({check_img});
+            }}
+            QCheckBox::indicator:hover {{ border: 1px solid rgba(255,255,255,0.5); }}
+        """)
+        self._sound_cb.toggled.connect(save_paste_sound)
+        autostart_col.addWidget(self._sound_cb)
+
         row2.addLayout(autostart_col)
         ml.addLayout(row2)
 
@@ -435,12 +586,37 @@ class SettingsPanel(QWidget):
         ml.addWidget(self._sep())
 
         # History
+        hist_header = QHBoxLayout()
+        hist_header.setSpacing(8)
         hist_label = QLabel("Cronologia")
         hist_label.setStyleSheet("color: rgba(255,255,255,0.55); font-size: 13px;")
-        ml.addWidget(hist_label)
+        hist_header.addWidget(hist_label)
+        hist_header.addStretch()
+
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Cerca...")
+        self._search_input.setFixedWidth(160)
+        self._search_input.setFixedHeight(24)
+        self._search_input.setStyleSheet("""
+            QLineEdit {
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.15);
+                border-radius: 4px;
+                color: rgba(255,255,255,0.85);
+                font-size: 11px;
+                padding: 0 8px;
+            }
+            QLineEdit:focus {
+                border: 1px solid rgba(80,140,255,0.5);
+            }
+        """)
+        self._search_input.textChanged.connect(self._on_search_changed)
+        hist_header.addWidget(self._search_input)
+        ml.addLayout(hist_header)
 
         self._history_scroll = QScrollArea()
         self._history_scroll.setWidgetResizable(True)
+        self._history_scroll.setMaximumHeight(280)
         self._history_scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._history_scroll.setStyleSheet(self._scroll_style())
@@ -583,10 +759,22 @@ class SettingsPanel(QWidget):
         self._run_anim(self._panel_height, 0, QEasingCurve.Type.InCubic)
 
     def refresh_data(self):
-        history = load_history()
-        self._chart.set_data(history)
+        self._full_history = load_history()
+        self._chart.set_data(self._full_history)
         self._update_total()
-        self._populate_history(history)
+        self._apply_search_filter()
+
+    def _on_search_changed(self, text: str):
+        self._apply_search_filter()
+
+    def _apply_search_filter(self):
+        query = self._search_input.text().strip().lower()
+        if query:
+            filtered = [e for e in self._full_history
+                        if query in e.get("text", "").lower()]
+        else:
+            filtered = self._full_history
+        self._populate_history(filtered)
 
     # ------------------------------------------------------------------ #
     #  Message view transitions
@@ -766,10 +954,39 @@ class SettingsPanel(QWidget):
         self._shortcuts_cb.toggled.connect(self._on_shortcut_change)
         layout.addWidget(self._shortcuts_cb)
 
+        # Mode selector: Toggle / Hold
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(6)
+        ml_label = QLabel("Modalità")
+        ml_label.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 12px;")
+        mode_row.addWidget(ml_label)
+        mode_row.addStretch()
+
+        current_mode = shortcuts.get("mode", "toggle")
+
+        self._mode_toggle_btn = QPushButton("Attiva / Disattiva")
+        self._mode_toggle_btn.setFixedHeight(26)
+        self._mode_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mode_toggle_btn.clicked.connect(lambda: self._set_shortcut_mode("toggle"))
+        mode_row.addWidget(self._mode_toggle_btn)
+
+        self._mode_hold_btn = QPushButton("Tieni premuto")
+        self._mode_hold_btn.setFixedHeight(26)
+        self._mode_hold_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mode_hold_btn.clicked.connect(lambda: self._set_shortcut_mode("hold"))
+        mode_row.addWidget(self._mode_hold_btn)
+
+        layout.addLayout(mode_row)
+
         mod_style = "color: rgba(255,255,255,0.45); font-size: 11px;"
         label_style = "color: rgba(255,255,255,0.7); font-size: 12px;"
 
-        # Toggle shortcut row
+        # --- Toggle mode rows ---
+        self._toggle_rows_widget = QWidget()
+        toggle_layout = QVBoxLayout(self._toggle_rows_widget)
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        toggle_layout.setSpacing(4)
+
         toggle_row = QHBoxLayout()
         toggle_row.setSpacing(6)
         tl = QLabel("Registra / Ferma")
@@ -780,12 +997,11 @@ class SettingsPanel(QWidget):
         tm.setStyleSheet(mod_style)
         toggle_row.addWidget(tm)
         self._toggle_key_btn = KeyCaptureButton(
-            shortcuts.get("toggle_key", "K"), self)
+            shortcuts.get("toggle_key", "U"), self)
         self._toggle_key_btn.key_captured.connect(self._on_shortcut_change)
         toggle_row.addWidget(self._toggle_key_btn)
-        layout.addLayout(toggle_row)
+        toggle_layout.addLayout(toggle_row)
 
-        # Discard shortcut row
         discard_row = QHBoxLayout()
         discard_row.setSpacing(6)
         dl = QLabel("Elimina registrazione")
@@ -796,16 +1012,92 @@ class SettingsPanel(QWidget):
         dm.setStyleSheet(mod_style)
         discard_row.addWidget(dm)
         self._discard_key_btn = KeyCaptureButton(
-            shortcuts.get("discard_key", "X"), self)
+            shortcuts.get("discard_key", "I"), self)
         self._discard_key_btn.key_captured.connect(self._on_shortcut_change)
         discard_row.addWidget(self._discard_key_btn)
-        layout.addLayout(discard_row)
+        toggle_layout.addLayout(discard_row)
+
+        layout.addWidget(self._toggle_rows_widget)
+
+        # --- Hold mode rows ---
+        self._hold_rows_widget = QWidget()
+        hold_layout = QVBoxLayout(self._hold_rows_widget)
+        hold_layout.setContentsMargins(0, 0, 0, 0)
+        hold_layout.setSpacing(4)
+
+        hold_rec_row = QHBoxLayout()
+        hold_rec_row.setSpacing(6)
+        hrl = QLabel("Tieni premuto per registrare")
+        hrl.setStyleSheet(label_style)
+        hold_rec_row.addWidget(hrl)
+        hold_rec_row.addStretch()
+        self._hold_record_btn = SpecialKeyCaptureButton(
+            shortcuts.get("hold_record_key", "PAUSE"), self)
+        self._hold_record_btn.key_captured.connect(self._on_shortcut_change)
+        hold_rec_row.addWidget(self._hold_record_btn)
+        hold_layout.addLayout(hold_rec_row)
+
+        hold_dis_row = QHBoxLayout()
+        hold_dis_row.setSpacing(6)
+        hdl = QLabel("Elimina registrazione")
+        hdl.setStyleSheet(label_style)
+        hold_dis_row.addWidget(hdl)
+        hold_dis_row.addStretch()
+        self._hold_discard_btn = SpecialKeyCaptureButton(
+            shortcuts.get("hold_discard_key", "SCROLL_LOCK"), self)
+        self._hold_discard_btn.key_captured.connect(self._on_shortcut_change)
+        hold_dis_row.addWidget(self._hold_discard_btn)
+        hold_layout.addLayout(hold_dis_row)
+
+        layout.addWidget(self._hold_rows_widget)
+
+        self._current_mode = current_mode
+        self._apply_mode_ui(current_mode)
+
+    def _mode_btn_style(self, active: bool) -> str:
+        if active:
+            return """
+                QPushButton {
+                    background: rgba(80,140,255,0.25);
+                    border: 1px solid rgba(80,140,255,0.45);
+                    border-radius: 4px;
+                    color: rgba(255,255,255,0.9);
+                    font-size: 11px; padding: 2px 10px;
+                }
+            """
+        return """
+            QPushButton {
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 4px;
+                color: rgba(255,255,255,0.55);
+                font-size: 11px; padding: 2px 10px;
+            }
+            QPushButton:hover {
+                background: rgba(255,255,255,0.12);
+                color: rgba(255,255,255,0.85);
+            }
+        """
+
+    def _apply_mode_ui(self, mode: str):
+        self._mode_toggle_btn.setStyleSheet(self._mode_btn_style(mode == "toggle"))
+        self._mode_hold_btn.setStyleSheet(self._mode_btn_style(mode == "hold"))
+        self._toggle_rows_widget.setVisible(mode == "toggle")
+        self._hold_rows_widget.setVisible(mode == "hold")
+
+    def _set_shortcut_mode(self, mode: str):
+        self._current_mode = mode
+        self._apply_mode_ui(mode)
+        self._on_shortcut_change()
 
     def _on_shortcut_change(self, _=None):
         shortcuts = {
             "enabled": self._shortcuts_cb.isChecked(),
+            "mode": self._current_mode,
             "toggle_key": self._toggle_key_btn._current_key,
             "discard_key": self._discard_key_btn._current_key,
+            "hold_record_key": self._hold_record_btn._current_key,
+            "hold_discard_key": self._hold_discard_btn._current_key,
         }
         save_shortcuts(shortcuts)
         self.shortcuts_changed.emit(shortcuts)

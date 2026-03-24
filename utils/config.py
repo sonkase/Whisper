@@ -73,14 +73,39 @@ def load_shortcuts() -> dict:
     cfg = _read_config()
     return cfg.get("shortcuts", {
         "enabled": True,
-        "toggle_key": "K",
-        "discard_key": "X",
+        "mode": "toggle",
+        "toggle_key": "U",
+        "discard_key": "I",
+        "hold_record_key": "PAUSE",
+        "hold_discard_key": "SCROLL_LOCK",
     })
 
 
 def save_shortcuts(shortcuts: dict):
     cfg = _read_config()
     cfg["shortcuts"] = shortcuts
+    _write_config(cfg)
+
+
+def load_post_processing() -> bool:
+    cfg = _read_config()
+    return cfg.get("post_processing", True)
+
+
+def save_post_processing(enabled: bool):
+    cfg = _read_config()
+    cfg["post_processing"] = enabled
+    _write_config(cfg)
+
+
+def load_paste_sound() -> bool:
+    cfg = _read_config()
+    return cfg.get("paste_sound", True)
+
+
+def save_paste_sound(enabled: bool):
+    cfg = _read_config()
+    cfg["paste_sound"] = enabled
     _write_config(cfg)
 
 

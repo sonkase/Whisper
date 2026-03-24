@@ -1,7 +1,7 @@
 from PyQt6.QtCore import (
     Qt, QRectF, QTimer, QPropertyAnimation, QPoint, pyqtProperty,
 )
-from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QFont
+from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QPainterPath
 from PyQt6.QtWidgets import QWidget, QApplication
 
 
@@ -27,12 +27,15 @@ class ToastWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
 
+        self._glow_opacity = 0
+
         self._fade_anim = None
+        self._glow_anim = None
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._fade_out)
 
-    # -- animated property --
+    # -- animated properties --
 
     @pyqtProperty(float)
     def toastOpacity(self):
@@ -41,6 +44,15 @@ class ToastWidget(QWidget):
     @toastOpacity.setter
     def toastOpacity(self, v):
         self._opacity = v
+        self.update()
+
+    @pyqtProperty(int)
+    def glowOpacity(self):
+        return self._glow_opacity
+
+    @glowOpacity.setter
+    def glowOpacity(self, v):
+        self._glow_opacity = v
         self.update()
 
     # -- public API --
@@ -66,6 +78,7 @@ class ToastWidget(QWidget):
         self._position(avoid_widget, anchor_point)
         self.show()
         self._fade_in()
+        self._run_glow()
         self._hide_timer.start(duration_ms)
 
     def dismiss(self):
@@ -124,6 +137,18 @@ class ToastWidget(QWidget):
         self._fade_anim = anim
         anim.start()
 
+    def _run_glow(self):
+        if self._glow_anim:
+            self._glow_anim.stop()
+        anim = QPropertyAnimation(self, b"glowOpacity")
+        anim.setDuration(1200)
+        anim.setKeyValueAt(0.0, 0)
+        anim.setKeyValueAt(0.12, 100)
+        anim.setKeyValueAt(0.4, 50)
+        anim.setKeyValueAt(1.0, 0)
+        self._glow_anim = anim
+        anim.start()
+
     # -- painting --
 
     def paintEvent(self, event):
@@ -150,6 +175,23 @@ class ToastWidget(QWidget):
         p.setBrush(QBrush(bg))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(rect, r, r)
+
+        # Yellow glow
+        if self._glow_opacity > 0:
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(rect, r, r)
+            p.setClipPath(clip)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor(255, 200, 50, self._glow_opacity)))
+            p.drawRect(rect)
+            p.restore()
+            # Yellow border
+            pen = QPen(QColor(255, 200, 50, self._glow_opacity))
+            pen.setWidthF(1.5)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(rect, r, r)
 
         # Border
         pen = QPen(QColor(255, 255, 255, 35))

@@ -20,22 +20,28 @@
 
 ## How it works
 
-1. **Click the pill** (or press `Shift+Alt+K`) to start recording
+1. **Click the pill** (or press `Shift+Alt+U`) to start recording
 2. **Click again** (or press the shortcut again) to stop
 3. Audio is sent to OpenAI Whisper API for transcription
-4. Text is **automatically pasted** into the window you were using before
+4. Text is **automatically corrected** by GPT-5-mini (grammar, punctuation, paragraphs)
+5. Text is **automatically pasted** into the window you were using before
 
 That's it. No extra steps.
 
 ## Features
 
 - **Floating pill widget** — minimal, always-on-top, draggable
-- **Global keyboard shortcuts** — works even when minimized (`Shift+Alt+K` to record, `Shift+Alt+X` to discard)
-- **Compact mode** — when minimized, a small indicator appears near the taskbar showing recording time and waveform
-- **Auto-paste** — transcribed text is copied to clipboard and pasted into the previously focused window
+- **AI post-processing** — GPT-5-mini corrects grammar, punctuation, adds paragraphs, and fixes misheard words
+- **Two shortcut modes** — Toggle (Shift+Alt+key) or Hold-to-record (push-to-talk with a single key like Pause)
+- **Global keyboard shortcuts** — works even when minimized
+- **Compact mode** — when minimized, a small indicator appears near the taskbar with red glow on start, recording waveform, and fade-out on completion
+- **Auto-paste** — transcribed text is copied to clipboard and pasted into the previously focused window, with foreground verification
+- **Sound notifications** — custom sounds for successful paste and paste errors, togglable in settings
+- **Paste error detection** — verifies the target window is in foreground before pasting; shows a yellow-glow toast with error sound if it fails
+- **Search history** — search bar to filter past transcriptions by text
 - **7 color themes** — Midnight, Viola, Bordeaux, Ambra, Ardesia, Foresta, Oceano
 - **Cost tracking** — bar chart of daily API costs with time filters
-- **Transcription history** — browse and copy past transcriptions
+- **Transcription history** — browse, search, and copy past transcriptions
 - **Auto-start** — optional Windows startup entry
 - **Voice-reactive waveform** — real-time audio visualization during recording
 
@@ -61,7 +67,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-On first launch, open settings (☰) and enter your OpenAI API key.
+On first launch, open settings and enter your OpenAI API key.
 
 ### Build executable
 
@@ -73,12 +79,21 @@ Produces `dist/WhisperFloat.exe`.
 
 ## Shortcuts
 
+### Toggle mode (default)
+
 | Action | Default shortcut |
 |--------|-----------------|
-| Start / Stop recording | `Shift + Alt + K` |
-| Discard recording | `Shift + Alt + X` |
+| Start / Stop recording | `Shift + Alt + U` |
+| Discard recording | `Shift + Alt + I` |
 
-Shortcuts are configurable in the settings panel. The modifier `Shift+Alt` is fixed — you choose the final key.
+### Hold mode (push-to-talk)
+
+| Action | Default key |
+|--------|------------|
+| Hold to record, release to transcribe | `Pause` |
+| Discard while holding | `Scroll Lock` |
+
+Shortcut mode and keys are configurable in the settings panel.
 
 ## Config
 
@@ -86,7 +101,7 @@ Settings are stored in `%APPDATA%\Whisper\config.json`. Transcription history in
 
 ## Cost
 
-Uses the OpenAI Whisper API at **$0.006 per minute** of audio. A typical 10-second recording costs ~$0.001.
+Uses the OpenAI Whisper API at **$0.006 per minute** of audio. Post-processing with GPT-5-mini costs fractions of a cent per transcription.
 
 ## License
 

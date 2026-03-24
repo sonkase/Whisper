@@ -1,6 +1,6 @@
 # Whisper — Voice-to-Text Desktop App
 
-Clone di Whisper Flow costruito con PyQt6. Registra audio dal microfono, trascrive tramite OpenAI Whisper API e incolla automaticamente il testo nella finestra precedente.
+Clone di Whisper Flow costruito con PyQt6. Registra audio dal microfono, trascrive tramite OpenAI Whisper API, corregge con GPT-5-mini e incolla automaticamente il testo nella finestra precedente.
 
 ---
 
@@ -8,10 +8,12 @@ Clone di Whisper Flow costruito con PyQt6. Registra audio dal microfono, trascri
 
 - **UI**: PyQt6 (widget frameless, custom painting, animazioni)
 - **Audio**: sounddevice + numpy (cattura real-time 16kHz mono PCM)
-- **Trascrizione**: OpenAI API (modello whisper-1)
+- **Trascrizione**: OpenAI API (modello whisper-1, lingua italiana)
+- **Post-processing**: OpenAI GPT-5-mini (correzione grammatica, punteggiatura, paragrafi, typo fonetici)
 - **Hotkey globali**: pynput (listener keyboard in background thread)
-- **Auto-paste**: ctypes (Windows API) + pyautogui (Ctrl+V)
+- **Auto-paste**: ctypes (Windows API) + pyautogui (Ctrl+V) con verifica foreground
 - **Clipboard**: pyperclip
+- **Suoni**: Windows MCI (ctypes.windll.winmm) per riproduzione mp3
 - **Icone**: qtawesome (Font Awesome)
 - **Build**: PyInstaller → .exe singolo
 - **Piattaforma**: Windows (usa ctypes.windll, Windows Registry, pyautogui)
@@ -25,40 +27,47 @@ Whisper/
 ├── main.py                  # Entry point, setup QApplication e icona
 ├── build.bat                # Script build PyInstaller
 ├── requirements.txt         # Dipendenze Python
+├── TODO.md                  # Implementazioni future
 ├── assets/
 │   ├── icon.ico             # Icona app (Windows)
-│   └── icon.png             # Icona app (alta qualità)
+│   ├── icon.png             # Icona app (alta qualità)
+│   ├── notify.mp3           # Suono notifica paste riuscito
+│   └── error.mp3            # Suono notifica paste fallito
 ├── core/
 │   ├── recorder.py          # AudioRecorder (QThread) — cattura audio
-│   └── transcriber.py       # TranscriberWorker (QThread) — OpenAI API
+│   ├── transcriber.py       # TranscriberWorker (QThread) — OpenAI Whisper API
+│   └── post_processor.py    # PostProcessorWorker (QThread) — GPT-5-mini correzione testo
 ├── ui/
 │   ├── pill_widget.py       # Widget principale (pill + state machine)
 │   ├── compact_pill.py      # Mini pill per modalità minimizzata
 │   ├── settings_panel.py    # Pannello impostazioni (slide-in)
-│   ├── toast_widget.py      # Notifica toast per errori paste
+│   ├── toast_widget.py      # Notifica toast per errori paste (con glow giallo)
 │   └── animations.py        # Factory animazioni (success sweep, error flash)
 └── utils/
     ├── config.py            # Persistenza config/history (JSON in %APPDATA%)
-    └── hotkeys.py           # HotkeyManager — shortcut globali con pynput
+    ├── hotkeys.py           # HotkeyManager — shortcut globali con pynput (toggle + hold mode)
+    └── sound.py             # Riproduzione suoni notifica (MCI, volume configurabile)
 ```
 
 ---
 
 ## Macchina a stati
 
-L'app opera come una state machine a 4 stati:
+L'app opera come una state machine a 5 stati:
 
 ```
 IDLE → RECORDING → TRANSCRIBING → SUCCESS → IDLE
                  ↘ DISCARD → IDLE
+                                 ↘ ERROR → IDLE
 ```
 
 | Stato | Cosa succede | Visuale |
 |-------|-------------|---------|
 | **IDLE** | In attesa di input | 5 barrette animate (breathing sinusoidale) |
 | **RECORDING** | Cattura audio in corso | Timer MM:SS rosso + waveform reattiva alla voce + pulsazione rossa |
-| **TRANSCRIBING** | Audio inviato a OpenAI | 5 barrette animate veloci blu + inner edge glow pulsante |
+| **TRANSCRIBING** | Audio inviato a OpenAI + post-processing GPT | 5 barrette animate veloci blu + inner edge glow pulsante |
 | **SUCCESS** | Testo trascritto e incollato | Sweep gradient verde da sinistra a destra + bordo verde |
+| **ERROR** | Paste fallito | Toast con glow giallo + suono errore, blocca nuove registrazioni per 2.5s |
 
 ---
 
@@ -116,9 +125,9 @@ Widget minimale 180×44px che compare centrato sopra la taskbar quando l'app è 
 
 ### Stati supportati
 
-- **Recording**: timer + waveform reattiva (identica alla pill principale)
+- **Recording**: timer + waveform reattiva (identica alla pill principale) + red glow iniziale (1s)
 - **Transcribing**: 5 barrette animate blu + inner edge glow
-- **Success**: sweep gradient verde, poi auto-hide dopo 1.4s con emissione segnale `closed`
+- **Success**: sweep gradient verde (800ms), poi fade-out finestra (250ms)
 
 ### Sincronizzazione con la pill principale
 
@@ -127,6 +136,7 @@ Gestita tramite `changeEvent` nella PillWidget:
 - **Minimize** → se in recording/transcribing, la compact pill appare con stato e dati sincronizzati (timer, waveform history, amplitude)
 - **Restore** → la compact pill sparisce, la pill principale mostra lo stato corrente con tutti i controlli (cestino ecc.)
 - La connessione `amplitude` del recorder viene collegata/scollegata dinamicamente
+- In stato **error**, la compact pill resta visibile fino al termine del toast
 
 ---
 
@@ -134,24 +144,31 @@ Gestita tramite `changeEvent` nella PillWidget:
 
 ### HotkeyManager
 
-Usa `pynput.keyboard.Listener` in un thread daemon. Traccia lo stato di Shift e Alt, e quando rileva Shift+Alt+tasto emette segnali Qt.
+Usa `pynput.keyboard.Listener` in un thread daemon. Supporta due modalità:
 
-- **Shift + Alt + K** (default): toggle recording (start/stop)
-- **Shift + Alt + X** (default): elimina registrazione
+### Modalità Toggle (default)
 
-I segnali (`toggle_triggered`, `discard_triggered`) sono thread-safe grazie al meccanismo `AutoConnection` di Qt che fa queue automatico quando emessi da un thread non-Qt.
+- **Shift + Alt + U** (default): toggle recording (start/stop)
+- **Shift + Alt + I** (default): elimina registrazione
+
+### Modalità Hold (push-to-talk)
+
+- **Pause** (default): tieni premuto per registrare, rilascia per trascrivere
+- **Scroll Lock** (default): elimina registrazione mentre si tiene premuto il tasto di registrazione
+
+I segnali (`toggle_triggered`, `stop_triggered`, `discard_triggered`) sono thread-safe grazie al meccanismo `AutoConnection` di Qt.
 
 ### Comportamento hotkey
 
 - **App minimizzata + toggle**: avvia compact pill + recording
-- **App minimizzata + toggle di nuovo**: compact pill → transcribing → success → si chiude
+- **App minimizzata + toggle di nuovo**: compact pill → transcribing → success → fade-out
 - **App visibile + toggle**: identico al click sulla pill
 - **Discard**: elimina registrazione sia in compact che in normal mode
-- **Durante transcribing/success**: toggle ignorato
+- **Durante transcribing/success/error**: toggle ignorato
 
 ### Configurazione
 
-I tasti sono configurabili dal pannello impostazioni. Il modificatore Shift+Alt è fisso, l'utente sceglie solo la lettera finale tramite un `KeyCaptureButton` (click → "..." → premi tasto → salvato).
+Due selettori nel pannello impostazioni per scegliere la modalità. In toggle mode, l'utente sceglie la lettera (Shift+Alt fisso). In hold mode, l'utente sceglie tasti speciali (Pause, Scroll Lock, F-keys, ecc.) tramite `SpecialKeyCaptureButton`.
 
 ---
 
@@ -183,9 +200,25 @@ Audio concatenato e salvato come WAV temporaneo (`tempfile.mkstemp`), passato al
 ### TranscriberWorker (QThread)
 
 - Crea client OpenAI con la API key
-- Invia il WAV al modello `whisper-1` con `response_format="text"`
+- Invia il WAV al modello `whisper-1` con `response_format="text"` e `language="it"`
 - Emette `finished(text)` o `error(message)`
 - Elimina il file WAV temporaneo in entrambi i casi
+
+---
+
+## Post-processing (`core/post_processor.py`)
+
+### PostProcessorWorker (QThread)
+
+- Riceve il testo trascritto da Whisper
+- Lo invia a GPT-5-mini con un system prompt che:
+  - Corregge punteggiatura e grammatica
+  - Divide in paragrafi logici con a-capo
+  - Deduce dal suono le parole fraintese dal speech-to-text
+  - Non aggiunge contenuto, non riassume, non riformula
+- Emette `finished(text)` o `error(message)`
+- In caso di errore, il pill_widget usa il testo raw di Whisper come fallback
+- Abilitabile/disabilitabile da settings ("Correggi testo con AI")
 
 ---
 
@@ -193,16 +226,29 @@ Audio concatenato e salvato come WAV temporaneo (`tempfile.mkstemp`), passato al
 
 ### Flusso
 
-1. `pyperclip.copy(text)` — testo in clipboard
+1. `pyperclip.copy(text + " ")` — testo in clipboard (con spazio finale)
 2. `SetForegroundWindow(hwnd)` — focus alla finestra precedente (con `AttachThreadInput` per cross-thread)
-3. `pyautogui.hotkey('ctrl', 'v')` — simula Ctrl+V dopo 100ms di delay
+3. Verifica `GetForegroundWindow() == hwnd` — controlla che la finestra sia effettivamente in primo piano
+4. `pyautogui.hotkey('ctrl', 'v')` — simula Ctrl+V dopo 100ms di delay
+5. `play_ding()` — suono di conferma (se abilitato)
 
 ### Gestione errori
 
-- Se `_previous_hwnd` è None → toast
-- Se `IsWindow(hwnd)` fallisce → toast
+- Se `_previous_hwnd` è None → stato error + toast + suono errore
+- Se `IsWindow(hwnd)` fallisce → stato error + toast + suono errore
+- Se `GetForegroundWindow()` non corrisponde all'hwnd target → stato error + toast + suono errore
 - Se `SetForegroundWindow` lancia eccezione → fallback diretto, poi toast se anche quello fallisce
 - Toast posizionato: sopra la compact pill (se minimizzato) o sotto la pill principale (se visibile)
+- Durante lo stato error (2.5s), le registrazioni sono bloccate
+
+---
+
+## Suoni (`utils/sound.py`)
+
+- Riproduzione asincrona di file mp3 tramite Windows MCI (`winmm.mciSendStringW`)
+- **notify.mp3**: suono di conferma paste riuscito (volume 20%)
+- **error.mp3**: suono di errore paste fallito (volume 14%)
+- Abilitabili/disabilitabili da settings ("Suono dopo incolla")
 
 ---
 
@@ -211,10 +257,10 @@ Audio concatenato e salvato come WAV temporaneo (`tempfile.mkstemp`), passato al
 Notifica compatta near-taskbar per comunicare errori di paste.
 
 - Messaggio: "Incolla non riuscito — testo negli appunti"
-- Fade-in 200ms, visibile 3s, fade-out 400ms
+- Fade-in 200ms, visibile 2s, fade-out 400ms
+- **Glow giallo**: flash giallo animato (1.2s) con bordo giallo al comparire
 - Posizionamento adattivo: sopra compact pill, sotto pill principale, o centrato in basso
 - Stesso tema dell'app
-- Si chiude automaticamente quando la compact pill completa il success
 
 ---
 
@@ -225,11 +271,13 @@ Slide-in/out sotto la pill (250ms, cubic easing). Larghezza 440px.
 ### Sezioni
 
 1. **Chiave API OpenAI** — campo password con toggle mostra/nascondi, auto-save
-2. **Tema** — 7 cerchi colorati cliccabili
+2. **Tema** — 7 cerchi colorati su 2 righe (4+3)
 3. **Avvio automatico** — checkbox che scrive in `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`
-4. **Scorciatoie** — checkbox abilita/disabilita + configurazione tasti (Shift+Alt+lettera)
-5. **Costi API** — grafico a barre dei costi giornalieri ($0.006/min), filtri temporali (7gg, 30gg, 3 mesi, 1 anno, totale)
-6. **Cronologia** — ultime 100 trascrizioni con timestamp, durata, costo, bottoni copia e espandi
+4. **Correggi testo con AI** — checkbox per abilitare/disabilitare il post-processing GPT
+5. **Suono dopo incolla** — checkbox per abilitare/disabilitare i suoni di notifica
+6. **Scorciatoie** — checkbox abilita/disabilita + selettore modalità (Toggle / Tieni premuto) + configurazione tasti per ogni modalità
+7. **Costi API** — grafico a barre dei costi giornalieri ($0.006/min), filtri temporali (7gg, 30gg, 3 mesi, 1 anno, totale)
+8. **Cronologia** — barra di ricerca + ultime 100 trascrizioni con timestamp, durata, costo, bottoni copia e espandi
 
 ### Vista messaggio
 
@@ -241,7 +289,7 @@ Cliccando "espandi" su una trascrizione, il pannello fa un crossfade alla vista 
 
 ### File
 
-- `%APPDATA%\Whisper\config.json` — API key, tema, scorciatoie
+- `%APPDATA%\Whisper\config.json` — API key, tema, scorciatoie, post-processing, suono
 - `%APPDATA%\Whisper\history.json` — array di trascrizioni
 
 ### Formato config
@@ -252,9 +300,14 @@ Cliccando "espandi" su una trascrizione, il pannello fa un crossfade alla vista 
   "theme": "Midnight",
   "shortcuts": {
     "enabled": true,
-    "toggle_key": "K",
-    "discard_key": "X"
-  }
+    "mode": "toggle",
+    "toggle_key": "U",
+    "discard_key": "I",
+    "hold_record_key": "PAUSE",
+    "hold_discard_key": "SCROLL_LOCK"
+  },
+  "post_processing": true,
+  "paste_sound": true
 }
 ```
 
@@ -279,19 +332,22 @@ Cliccando "espandi" su una trascrizione, il pannello fa un crossfade alla vista 
 | Animazione | Durata | Descrizione |
 |-----------|--------|-------------|
 | **Startup glow** | 1800ms | Alone blu esterno, opacity 0→140→80→0 |
+| **Compact start glow** | 1000ms | Glow rosso sulla compact pill all'avvio registrazione, opacity 0→80→40→0 |
 | **Idle breathing** | Continua | 5 barrette sinusoidali, altezza 3–7px |
 | **Recording waveform** | Real-time | Barrette rosse scrollanti destra→sinistra, altezza da amplitude |
 | **Recording pulse** | Continua | Glow rosso sinusoidale (max alpha 25) |
 | **Transcribing bars** | Continua | 5 barrette sinusoidali veloci (×3.5), blu |
 | **Transcribing glow** | Continua | Inner edge glow 4 direzioni, pulsante |
 | **Transcribing pulse** | Continua | Glow blu sinusoidale (max alpha 30) |
-| **Success sweep** | 1400ms | Gradient verde che scorre sinistra→destra + bordo verde, fade out |
+| **Success sweep** | 1400ms (pill) / 800ms (compact) | Gradient verde sinistra→destra + bordo verde |
+| **Compact fade-out** | 250ms | Fade opacità finestra 1→0 dopo success sweep |
 | **Error flash** | 600ms | Bordo rosso, opacity 0→200→0 |
+| **Toast glow** | 1200ms | Glow giallo + bordo giallo, opacity 0→100→50→0 |
 
 ### Implementazione
 
 - Paint timer a 16ms (~60fps) guida `paintEvent`
-- `QPropertyAnimation` per success e error (driven by opacity property)
+- `QPropertyAnimation` per success, error, glow e fade-out (driven by opacity properties)
 - Pulse timers separati a 30ms per glow di sfondo
 - Tutto il rendering è custom `QPainter` (no widget Qt standard per il contenuto)
 

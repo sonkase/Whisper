@@ -21,6 +21,7 @@ class TranscriberWorker(QThread):
                     model="whisper-1",
                     file=audio_file,
                     response_format="text",
+                    language="it",
                 )
 
             self._cleanup()

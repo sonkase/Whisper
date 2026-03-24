@@ -3,6 +3,7 @@ import ctypes.wintypes
 import math
 import os
 import time
+from utils.sound import play_ding, play_error
 
 import pyperclip
 import pyautogui
@@ -18,6 +19,7 @@ from PyQt6.QtWidgets import QWidget, QPushButton, QToolTip, QApplication
 
 from core.recorder import AudioRecorder
 from core.transcriber import TranscriberWorker
+from core.post_processor import PostProcessorWorker
 from ui.settings_panel import SettingsPanel
 from ui.compact_pill import CompactPill
 from ui.toast_widget import ToastWidget
@@ -25,7 +27,10 @@ from ui.animations import (
     create_success_flash,
     create_error_flash,
 )
-from utils.config import load_theme, save_theme, save_transcription, load_shortcuts
+from utils.config import (
+    load_theme, save_theme, save_transcription, load_shortcuts,
+    load_post_processing, load_paste_sound,
+)
 from utils.hotkeys import HotkeyManager
 
 THEME_COLORS = {
@@ -71,6 +76,7 @@ class PillWidget(QWidget):
 
         self._recorder = None
         self._transcriber = None
+        self._post_processor = None
         self._previous_hwnd = None
         self._recording_duration = 0.0
 
@@ -329,22 +335,27 @@ class PillWidget(QWidget):
     def _init_hotkeys(self):
         shortcuts = load_shortcuts()
         self._hotkey_mgr = HotkeyManager(self)
-        self._hotkey_mgr.set_toggle_key(shortcuts.get("toggle_key", "K"))
-        self._hotkey_mgr.set_discard_key(shortcuts.get("discard_key", "X"))
-        self._hotkey_mgr.set_enabled(shortcuts.get("enabled", True))
+        self._apply_shortcuts(shortcuts)
         self._hotkey_mgr.toggle_triggered.connect(self._on_hotkey_toggle)
+        self._hotkey_mgr.stop_triggered.connect(self._on_hotkey_stop)
         self._hotkey_mgr.discard_triggered.connect(self._on_hotkey_discard)
         self._hotkey_mgr.start()
 
         self._settings_panel.shortcuts_changed.connect(self._on_shortcuts_changed)
 
-    def _on_shortcuts_changed(self, shortcuts: dict):
-        self._hotkey_mgr.set_toggle_key(shortcuts.get("toggle_key", "K"))
-        self._hotkey_mgr.set_discard_key(shortcuts.get("discard_key", "X"))
+    def _apply_shortcuts(self, shortcuts: dict):
+        self._hotkey_mgr.set_toggle_key(shortcuts.get("toggle_key", "U"))
+        self._hotkey_mgr.set_discard_key(shortcuts.get("discard_key", "I"))
+        self._hotkey_mgr.set_hold_record_key(shortcuts.get("hold_record_key", "PAUSE"))
+        self._hotkey_mgr.set_hold_discard_key(shortcuts.get("hold_discard_key", "SCROLL_LOCK"))
+        self._hotkey_mgr.set_mode(shortcuts.get("mode", "toggle"))
         self._hotkey_mgr.set_enabled(shortcuts.get("enabled", True))
 
+    def _on_shortcuts_changed(self, shortcuts: dict):
+        self._apply_shortcuts(shortcuts)
+
     def _on_hotkey_toggle(self):
-        if self._state == "transcribing" or self._state == "success":
+        if self._state in ("transcribing", "success", "error"):
             return
 
         if self._state == "idle":
@@ -360,6 +371,14 @@ class PillWidget(QWidget):
                 self._stop_compact_recording()
             else:
                 self._toggle_recording()
+
+    def _on_hotkey_stop(self):
+        if self._state != "recording":
+            return
+        if self._compact_mode:
+            self._stop_compact_recording()
+        else:
+            self._toggle_recording()
 
     def _on_hotkey_discard(self):
         if self._state != "recording":
@@ -799,8 +818,24 @@ class PillWidget(QWidget):
         self._transcriber.start()
 
     def _on_transcription_done(self, text: str):
+        if load_post_processing():
+            self._raw_transcription = text
+            self._post_processor = PostProcessorWorker(text, self._api_key, self)
+            self._post_processor.finished.connect(self._on_post_processing_done)
+            self._post_processor.error.connect(self._on_post_processing_error)
+            self._post_processor.start()
+        else:
+            self._deliver_result(text)
+
+    def _on_post_processing_done(self, text: str):
+        self._deliver_result(text)
+
+    def _on_post_processing_error(self, message: str):
+        self._deliver_result(self._raw_transcription)
+
+    def _deliver_result(self, text: str):
         self._stop_bg_pulse()
-        pyperclip.copy(text)
+        pyperclip.copy(text + " ")
 
         # Save to history
         save_transcription(text, self._recording_duration)
@@ -829,6 +864,9 @@ class PillWidget(QWidget):
             self._compact_pill.closed.disconnect(self._finish_compact_success)
         except TypeError:
             pass
+        if self._state == "error":
+            return
+        self._compact_pill.hide()
         self._toast.dismiss()
         self._compact_mode = False
         self._reset_to_idle()
@@ -845,6 +883,15 @@ class PillWidget(QWidget):
             self.mapToGlobal(QPoint(self.PILL_WIDTH // 2, 0)),
             message,
         )
+
+    def _finish_error(self):
+        if self._state != "error":
+            return
+        if self._compact_mode:
+            self._compact_pill.hide()
+            self._compact_mode = False
+        self._toast.dismiss()
+        self._reset_to_idle()
 
     def _reset_to_idle(self):
         self._state = "idle"
@@ -905,33 +952,47 @@ class PillWidget(QWidget):
                 user32.AttachThreadInput(current_thread, target_thread, False)
             else:
                 user32.SetForegroundWindow(hwnd)
+            self._paste_target_hwnd = hwnd
             QTimer.singleShot(100, self._execute_paste)
         except Exception:
             try:
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
+                self._paste_target_hwnd = hwnd
                 QTimer.singleShot(100, self._execute_paste)
             except Exception:
                 self._show_clipboard_toast()
 
     def _execute_paste(self):
+        user32 = ctypes.windll.user32
+        fg = user32.GetForegroundWindow()
+        if fg != self._paste_target_hwnd:
+            self._show_clipboard_toast()
+            return
         pyautogui.hotkey('ctrl', 'v')
+        if load_paste_sound():
+            play_ding()
 
     def _show_clipboard_toast(self):
+        if load_paste_sound():
+            play_error()
+        self._state = "error"
         self._toast.set_bg_color(self._bg_color)
+        error_duration = 2000
         if self._compact_mode:
-            # Above compact pill
             self._toast.show_message(
                 "Incolla non riuscito \u2014 testo negli appunti",
+                duration_ms=error_duration,
                 avoid_widget=self._compact_pill,
             )
         else:
-            # Below the main pill
             pill_bottom_global = self.mapToGlobal(
                 QPoint(self._pill_x, self.SHADOW_MARGIN + self.PILL_HEIGHT + 6))
             self._toast.show_message(
                 "Incolla non riuscito \u2014 testo negli appunti",
+                duration_ms=error_duration,
                 anchor_point=pill_bottom_global,
             )
+        QTimer.singleShot(error_duration + 500, self._finish_error)
 
     # ------------------------------------------------------------------ #
     #  Settings
