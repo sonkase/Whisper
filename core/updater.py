@@ -158,13 +158,13 @@ def apply_update_and_restart(new_exe_path: str):
 :wait
 tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
 if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
+    ping -n 2 127.0.0.1 >nul
     goto wait
 )
-timeout /t 1 /nobreak >nul
+ping -n 2 127.0.0.1 >nul
 move /y "{new_exe_path}" "{current_exe}"
 if errorlevel 1 (
-    timeout /t 2 /nobreak >nul
+    ping -n 3 127.0.0.1 >nul
     move /y "{new_exe_path}" "{current_exe}"
 )
 start "" "{current_exe}"
@@ -175,9 +175,11 @@ del "%~f0"
     with os.fdopen(bat_fd, "w") as f:
         f.write(bat_content)
 
+    # Use CREATE_NO_WINDOW to avoid terminal flash
+    CREATE_NO_WINDOW = 0x08000000
     subprocess.Popen(
         ["cmd.exe", "/c", bat_path],
-        creationflags=0x00000008,  # DETACHED_PROCESS
+        creationflags=CREATE_NO_WINDOW,
         close_fds=True,
     )
 

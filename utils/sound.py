@@ -1,10 +1,12 @@
 import os
+import sys
 import threading
 import ctypes
 
 _VOLUME = 20  # percentage 0-100
 
-_ASSETS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+_BASE = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ASSETS = os.path.join(_BASE, "assets")
 _NOTIFY_FILE = os.path.join(_ASSETS, "notify.mp3")
 _ERROR_FILE = os.path.join(_ASSETS, "error.mp3")
 
