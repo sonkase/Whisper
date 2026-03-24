@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.2.11"
+APP_VERSION = "1.2.12"
 GITHUB_REPO = "sonkase/Whisper"
 
 
@@ -141,14 +141,8 @@ class UpdateDownloader(QThread):
 def apply_update_and_restart(new_exe_path: str):
     """Replace the current exe with the new one and relaunch.
 
-    Creates a PowerShell script that:
-    1. Waits for the current process to fully exit
-    2. Cleans stale _MEI dirs left by the old process
-    3. Removes the internet Zone.Identifier from the new exe
-    4. Replaces the old exe with the new one
-    5. Relaunches via explorer.exe (mimics user double-click to avoid
-       Windows Defender blocking extracted DLLs on first launch)
-    6. Cleans up temp files
+    Creates a PowerShell script that waits for the process to exit,
+    cleans _MEI dirs, unblocks the exe, replaces it, and relaunches.
     """
     current_exe = _exe_path()
 
@@ -158,132 +152,49 @@ def apply_update_and_restart(new_exe_path: str):
 
     pid = os.getpid()
 
-    log_path = os.path.join(os.path.dirname(current_exe), "whisper_update.log")
-
     ps_fd, ps_path = tempfile.mkstemp(suffix=".ps1", prefix="whisper_updater_")
     ps_content = f'''
-$logFile = '{log_path}'
-function Log($msg) {{
-    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
-    "$ts  $msg" | Out-File -Append -FilePath $logFile -Encoding utf8
-}}
-
-Log "=== UPDATE START ==="
-Log "Old exe: {current_exe}"
-Log "New exe: {new_exe_path}"
-Log "Old PID: {pid}"
-Log "PS script: {ps_path}"
-
 # 1. Wait for the old process to fully terminate
-Log "Step 1: Waiting for PID {pid} to exit..."
 try {{
     $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
-    if ($proc) {{
-        $exited = $proc.WaitForExit(30000)
-        Log "  WaitForExit returned: $exited"
-    }} else {{
-        Log "  Process already gone"
-    }}
-}} catch {{
-    Log "  Exception: $_"
-}}
-Start-Sleep -Seconds 2
-Log "  Process check after sleep: $(Get-Process -Id {pid} -ErrorAction SilentlyContinue)"
+    if ($proc) {{ $proc.WaitForExit(30000) }}
+}} catch {{}}
+Start-Sleep -Seconds 1
 
-# 2. Wait until the exe file handle is fully released
-Log "Step 2: Waiting for file handle release..."
-$fileReleased = $false
+# 2. Wait until the exe file handle is released
 for ($i = 0; $i -lt 20; $i++) {{
     try {{
         $fs = [System.IO.File]::Open('{current_exe}', 'Open', 'ReadWrite', 'None')
         $fs.Close()
-        $fileReleased = $true
-        Log "  File released after $i attempts"
         break
     }} catch {{
-        if ($i % 5 -eq 0) {{ Log "  Attempt $i - still locked: $_" }}
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 300
     }}
 }}
-if (-not $fileReleased) {{ Log "  WARNING: File never released after 20 attempts" }}
 
-# 3. Check _MEI directories before cleanup
-$meiDirs = Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue
-Log "Step 3: Found $($meiDirs.Count) _MEI dirs: $($meiDirs.Name -join ', ')"
-$meiDirs | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-$meiAfter = Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue
-Log "  After cleanup: $($meiAfter.Count) remaining: $($meiAfter.Name -join ', ')"
-Start-Sleep -Milliseconds 500
+# 3. Clean stale _MEI directories (os._exit leaves them behind)
+Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-# 4. Unblock downloaded exe
-Log "Step 4: Unblock-File on new exe..."
-Log "  New exe exists: $(Test-Path '{new_exe_path}')"
-Log "  New exe size: $((Get-Item '{new_exe_path}' -ErrorAction SilentlyContinue).Length)"
-$zone = Get-Content -Path '{new_exe_path}:Zone.Identifier' -ErrorAction SilentlyContinue
-Log "  Zone.Identifier before: $zone"
+# 4. Unblock downloaded exe (remove Zone.Identifier ADS)
 Unblock-File -Path '{new_exe_path}' -ErrorAction SilentlyContinue
-$zoneAfter = Get-Content -Path '{new_exe_path}:Zone.Identifier' -ErrorAction SilentlyContinue
-Log "  Zone.Identifier after: $zoneAfter"
 
 # 5. Rename old exe, copy new one in
-Log "Step 5: Replacing exe..."
 $oldBackup = '{current_exe}.old'
 Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
-try {{
-    Rename-Item -Path '{current_exe}' -NewName $oldBackup -Force -ErrorAction Stop
-    Log "  Renamed old exe to .old"
-}} catch {{
-    Log "  ERROR renaming: $_"
-}}
-try {{
-    Copy-Item -Path '{new_exe_path}' -Destination '{current_exe}' -Force -ErrorAction Stop
-    Log "  Copied new exe in place"
-}} catch {{
-    Log "  ERROR copying: $_"
-}}
-Log "  Final exe exists: $(Test-Path '{current_exe}')"
-Log "  Final exe size: $((Get-Item '{current_exe}' -ErrorAction SilentlyContinue).Length)"
+Rename-Item -Path '{current_exe}' -NewName $oldBackup -Force -ErrorAction SilentlyContinue
+Copy-Item -Path '{new_exe_path}' -Destination '{current_exe}' -Force
 
 # 6. Unblock final exe
 Unblock-File -Path '{current_exe}' -ErrorAction SilentlyContinue
-Log "Step 6: Unblocked final exe"
 
-# 7. Check _MEI state right before launch
-$meiBefore = Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue
-Log "Step 7: _MEI dirs before launch: $($meiBefore.Count) - $($meiBefore.Name -join ', ')"
+# 7. Launch the new exe
+Start-Sleep -Seconds 1
+Start-Process -FilePath '{current_exe}'
 
-# 8. Launch the new exe
+# 8. Cleanup temp files
 Start-Sleep -Seconds 2
-Log "Step 8: Launching exe..."
-Log "  Method: Start-Process with exe path directly"
-try {{
-    $p = Start-Process -FilePath '{current_exe}' -PassThru -ErrorAction Stop
-    Log "  Launched! New PID: $($p.Id)"
-}} catch {{
-    Log "  ERROR launching: $_"
-    Log "  Trying fallback: cmd /c start..."
-    try {{
-        Start-Process cmd.exe -ArgumentList '/c', 'start', '""', '"{current_exe}"' -WindowStyle Hidden -ErrorAction Stop
-        Log "  Fallback launch succeeded"
-    }} catch {{
-        Log "  FALLBACK ERROR: $_"
-    }}
-}}
-
-# 9. Check if process is alive after a moment
-Start-Sleep -Seconds 3
-$meiAfterLaunch = Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue
-Log "Step 9: _MEI dirs after launch: $($meiAfterLaunch.Count) - $($meiAfterLaunch.Name -join ', ')"
-$whisperProcs = Get-Process -Name "Whisper" -ErrorAction SilentlyContinue
-Log "  Whisper processes running: $($whisperProcs.Count) - PIDs: $($whisperProcs.Id -join ', ')"
-
-# 10. Cleanup
-Log "Step 10: Cleanup..."
 Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
 Remove-Item '{new_exe_path}' -ErrorAction SilentlyContinue
-Log "=== UPDATE COMPLETE ==="
-# Don't delete the PS script yet so log is fully written
-Start-Sleep -Seconds 2
 Remove-Item '{ps_path}' -ErrorAction SilentlyContinue
 '''
 

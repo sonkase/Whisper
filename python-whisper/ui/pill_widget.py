@@ -357,6 +357,9 @@ class PillWidget(QWidget):
     def _on_auto_download_finished(self, temp_path, tag):
         if hasattr(self, '_update_window'):
             self._update_window.set_installing()
+        # Hide tray icon before os._exit() — otherwise Windows leaves a ghost icon
+        if hasattr(self, '_tray_icon'):
+            self._tray_icon.hide()
         apply_update_and_restart(temp_path)
 
     def _on_auto_download_error(self, message):
