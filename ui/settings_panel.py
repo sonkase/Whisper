@@ -380,8 +380,8 @@ class SettingsPanel(QWidget):
     theme_changed = pyqtSignal(str)
     shortcuts_changed = pyqtSignal(dict)
 
-    TARGET_HEIGHT = 760
-    MESSAGE_HEIGHT = 760
+    TARGET_HEIGHT = 768
+    MESSAGE_HEIGHT = 768
 
     def __init__(self, parent: QWidget, theme_name: str = "Midnight",
                  embedded: bool = False):
@@ -474,6 +474,7 @@ class SettingsPanel(QWidget):
             self._theme_btns[name] = btn
         theme_row.addStretch()
         ml.addLayout(theme_row)
+        ml.addSpacing(8)
 
         # Options grid (2 columns)
         check_img = _create_check_icon_path()
