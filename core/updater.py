@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 GITHUB_REPO = "sonkase/Whisper"
 
 
@@ -153,12 +153,23 @@ def apply_update_and_restart(new_exe_path: str):
         # Running as script — just inform the user
         return False
 
+    pid = os.getpid()
     bat_content = f'''@echo off
+:wait
+tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait
+)
+timeout /t 1 /nobreak >nul
+move /y "{new_exe_path}" "{current_exe}"
+if errorlevel 1 (
     timeout /t 2 /nobreak >nul
     move /y "{new_exe_path}" "{current_exe}"
-    start "" "{current_exe}"
-    del "%~f0"
-    '''
+)
+start "" "{current_exe}"
+del "%~f0"
+'''
 
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="whisper_updater_")
     with os.fdopen(bat_fd, "w") as f:
