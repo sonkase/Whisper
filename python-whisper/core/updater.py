@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.2.12"
+APP_VERSION = "1.2.13"
 GITHUB_REPO = "sonkase/Whisper"
 
 
@@ -187,9 +187,11 @@ Copy-Item -Path '{new_exe_path}' -Destination '{current_exe}' -Force
 # 6. Unblock final exe
 Unblock-File -Path '{current_exe}' -ErrorAction SilentlyContinue
 
-# 7. Launch the new exe
+# 7. Launch via explorer.exe (uses ShellExecuteEx — same DLL search
+#    path as a user double-click; Start-Process uses CreateProcess which
+#    inherits the hidden PowerShell's restricted environment and fails)
 Start-Sleep -Seconds 1
-Start-Process -FilePath '{current_exe}'
+Start-Process explorer.exe -ArgumentList '"{current_exe}"'
 
 # 8. Cleanup temp files
 Start-Sleep -Seconds 2
