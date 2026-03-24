@@ -6,19 +6,42 @@
 
 <p align="center">
   Voice-to-text desktop app for Windows.<br>
-  Record, transcribe, paste — in one click or shortcut.
+  Speak. Transcribe. Paste. One click or one shortcut.
+</p>
+
+<p align="center">
+  100% Free &middot; Open Source &middot; Pay only for API usage
 </p>
 
 ---
 
 ## How it works
 
-1. **Click the pill** (or press `Shift+Alt+U`) to start recording
-2. **Click again** (or press the shortcut again) to stop
-3. Audio is sent to OpenAI Whisper API → corrected by GPT-5-mini
-4. Text is **automatically pasted** into the window you were using before
+1. **Record** — Click the pill or press a shortcut. Speak freely.
+2. **Transcribe** — Audio is sent to OpenAI Whisper API. GPT cleans up grammar and punctuation.
+3. **Paste** — Text is automatically pasted into the window you were using. No manual copy-paste.
 
-## Setup
+## Features
+
+- **Always on top** — Compact pill-shaped UI that doesn't cover your work or steal focus
+- **AI correction** — Adds punctuation, fixes typos, splits text into paragraphs
+- **Global shortcuts** — Toggle mode (`Shift+Alt+U`) or hold-to-talk mode (`Pause` key), fully configurable
+- **Auto-paste** — Transcribed text goes straight into your active window
+- **Auto-update** — The app updates itself when a new version is available
+- **System tray** — Lives in the tray, starts minimized, always ready
+- **7 themes** — Midnight, Violet, Bordeaux, Amber, Slate, Forest, Ocean
+
+## Download
+
+Grab the latest `.exe` from [Releases](https://github.com/sonkase/Whisper/releases). No installation needed — just run it.
+
+Requires **Windows 10/11** and an **OpenAI API key** (enter it in settings on first launch).
+
+## Cost
+
+Only raw OpenAI API costs: **$0.006/min** of audio. The app itself is free.
+
+## Build from source
 
 ```bash
 git clone https://github.com/sonkase/Whisper.git
@@ -27,29 +50,13 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Requires **Python 3.10+**, **Windows 10/11**, and an **OpenAI API key** (enter it in settings on first launch).
-
-### Build executable
+Build a standalone `.exe`:
 
 ```bash
-build.bat
+pyinstaller build.spec --clean --noconfirm
 ```
 
-## Shortcuts
-
-**Toggle mode** (default): `Shift+Alt+U` start/stop, `Shift+Alt+I` discard.
-
-**Hold mode** (push-to-talk): hold `Pause` to record, release to transcribe. `Scroll Lock` to discard.
-
-Mode and keys are configurable in settings.
-
-## System tray
-
-The app lives in the system tray. Closing the window hides it to tray — double-click the tray icon to show it again, right-click to quit. By default, the app starts minimized to tray.
-
-## Cost
-
-OpenAI Whisper API: **$0.006/min**. GPT-5-mini post-processing: fractions of a cent per transcription.
+Requires Python 3.10+.
 
 ## License
 

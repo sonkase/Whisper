@@ -4,7 +4,6 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-*.spec
 .env
 *.exe
 .vscode/
@@ -12,3 +11,7 @@ build/
 .claude/
 CLAUDE.md
 TODO.md
+python-whisper/
+sveltekit-whisper/
+docs/
+test_upd/
