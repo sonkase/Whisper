@@ -22,6 +22,7 @@ from utils.config import (
     save_api_key, load_history, load_shortcuts, save_shortcuts,
     load_post_processing, save_post_processing,
     load_paste_sound, save_paste_sound,
+    load_start_minimized, save_start_minimized,
 )
 
 try:
@@ -378,8 +379,8 @@ class SettingsPanel(QWidget):
     theme_changed = pyqtSignal(str)
     shortcuts_changed = pyqtSignal(dict)
 
-    TARGET_HEIGHT = 900
-    MESSAGE_HEIGHT = 900
+    TARGET_HEIGHT = 720
+    MESSAGE_HEIGHT = 720
 
     def __init__(self, parent: QWidget, theme_name: str = "Midnight"):
         super().__init__(parent)
@@ -543,6 +544,25 @@ class SettingsPanel(QWidget):
         self._sound_cb.toggled.connect(save_paste_sound)
         autostart_col.addWidget(self._sound_cb)
 
+        self._start_min_cb = QCheckBox("Avvia minimizzata")
+        self._start_min_cb.setChecked(load_start_minimized())
+        self._start_min_cb.setStyleSheet(f"""
+            QCheckBox {{ color: rgba(255,255,255,0.6); font-size: 12px; spacing: 6px; }}
+            QCheckBox::indicator {{
+                width: 14px; height: 14px;
+                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 3px; background: rgba(255,255,255,0.06);
+            }}
+            QCheckBox::indicator:checked {{
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.5);
+                image: url({check_img});
+            }}
+            QCheckBox::indicator:hover {{ border: 1px solid rgba(255,255,255,0.5); }}
+        """)
+        self._start_min_cb.toggled.connect(save_start_minimized)
+        autostart_col.addWidget(self._start_min_cb)
+
         row2.addLayout(autostart_col)
         ml.addLayout(row2)
 
@@ -616,7 +636,7 @@ class SettingsPanel(QWidget):
 
         self._history_scroll = QScrollArea()
         self._history_scroll.setWidgetResizable(True)
-        self._history_scroll.setMaximumHeight(280)
+        self._history_scroll.setMaximumHeight(180)
         self._history_scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._history_scroll.setStyleSheet(self._scroll_style())

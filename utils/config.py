@@ -109,6 +109,17 @@ def save_paste_sound(enabled: bool):
     _write_config(cfg)
 
 
+def load_start_minimized() -> bool:
+    cfg = _read_config()
+    return cfg.get("start_minimized", True)
+
+
+def save_start_minimized(enabled: bool):
+    cfg = _read_config()
+    cfg["start_minimized"] = enabled
+    _write_config(cfg)
+
+
 # ------------------------------------------------------------------ #
 #  History & cost tracking
 # ------------------------------------------------------------------ #

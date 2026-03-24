@@ -13,9 +13,12 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QPen, QFont,
-    QLinearGradient, QPainterPath,
+    QLinearGradient, QPainterPath, QIcon, QAction,
 )
-from PyQt6.QtWidgets import QWidget, QPushButton, QToolTip, QApplication
+from PyQt6.QtWidgets import (
+    QWidget, QPushButton, QToolTip, QApplication,
+    QSystemTrayIcon, QMenu,
+)
 
 from core.recorder import AudioRecorder
 from core.transcriber import TranscriberWorker
@@ -29,7 +32,7 @@ from ui.animations import (
 )
 from utils.config import (
     load_theme, save_theme, save_transcription, load_shortcuts,
-    load_post_processing, load_paste_sound,
+    load_post_processing, load_paste_sound, load_start_minimized,
 )
 from utils.hotkeys import HotkeyManager
 
@@ -111,6 +114,7 @@ class PillWidget(QWidget):
         self._toast = ToastWidget(self._bg_color)
 
         self._init_hotkeys()
+        self._init_tray_icon()
 
         self._paint_timer = QTimer(self)
         self._paint_timer.timeout.connect(self._tick)
@@ -189,22 +193,7 @@ class PillWidget(QWidget):
             QPushButton:hover { color: rgba(255,100,100,0.95); }
         """)
         self._close_btn.move(right_edge - btn_size, top)
-        self._close_btn.clicked.connect(QApplication.quit)
-
-        # Minimize
-        self._min_btn = QPushButton("\u2014", self)
-        self._min_btn.setFixedSize(btn_size, btn_size)
-        self._min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._min_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; border: none;
-                color: rgba(255,255,255,0.6);
-                font-size: 16px; font-weight: 900;
-            }
-            QPushButton:hover { color: rgba(255,255,255,0.95); }
-        """)
-        self._min_btn.move(right_edge - 2 * btn_size - 2, top)
-        self._min_btn.clicked.connect(self.showMinimized)
+        self._close_btn.clicked.connect(self.hide)
 
         # Settings
         self._gear_btn = QPushButton("\u2630", self)
@@ -218,7 +207,7 @@ class PillWidget(QWidget):
             }
             QPushButton:hover { color: rgba(255,255,255,0.85); }
         """)
-        self._gear_btn.move(right_edge - 3 * btn_size - 4, top)
+        self._gear_btn.move(right_edge - 2 * btn_size - 2, top)
         self._gear_btn.clicked.connect(self._toggle_settings)
 
     def _create_trash_button(self):
@@ -258,18 +247,88 @@ class PillWidget(QWidget):
             x = (geo.width() - self.width()) // 2
             self.move(x, 60)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._our_hwnd = int(self.winId())
-        # One-time startup glow to help locate the pill
-        if not hasattr(self, '_startup_done'):
-            self._startup_done = True
-            self._run_startup_glow()
+    def _run_startup_glow(self):
+        from PyQt6.QtCore import QPropertyAnimation
+        anim = QPropertyAnimation(self, b"startupGlowOpacity")
+        anim.setDuration(1800)
+        anim.setKeyValueAt(0.0, 0)
+        anim.setKeyValueAt(0.15, 140)
+        anim.setKeyValueAt(0.5, 80)
+        anim.setKeyValueAt(1.0, 0)
+        self._startup_anim = anim
+        anim.start()
+
+    # ------------------------------------------------------------------ #
+    #  System tray icon
+    # ------------------------------------------------------------------ #
+
+    def _init_tray_icon(self):
+        self._tray_icon = QSystemTrayIcon(self)
+        app_icon = QApplication.instance().windowIcon()
+        if not app_icon.isNull():
+            self._tray_icon.setIcon(app_icon)
+        else:
+            self._tray_icon.setIcon(QIcon())
+        self._tray_icon.setToolTip("Whisper")
+
+        tray_menu = QMenu()
+        tray_menu.setStyleSheet("""
+            QMenu {
+                background: #1e1e2e; color: #e0e0e0;
+                border: 1px solid rgba(255,255,255,0.15);
+                padding: 4px;
+            }
+            QMenu::item { padding: 6px 24px; }
+            QMenu::item:selected { background: rgba(80,140,255,0.3); }
+        """)
+
+        self._tray_show_action = QAction("Mostra", self)
+        self._tray_show_action.triggered.connect(self._tray_toggle_window)
+        tray_menu.addAction(self._tray_show_action)
+
+        tray_menu.addSeparator()
+
+        quit_action = QAction("Esci", self)
+        quit_action.triggered.connect(self._quit_app)
+        tray_menu.addAction(quit_action)
+
+        self._tray_icon.setContextMenu(tray_menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._tray_toggle_window()
+
+    def _tray_toggle_window(self):
+        if self.isVisible() and not self.isMinimized():
+            self.hide()
+        else:
+            self.showNormal()
+            self.activateWindow()
+
+    def _update_tray_text(self):
+        if self.isVisible() and not self.isMinimized():
+            self._tray_show_action.setText("Nascondi")
+        else:
+            self._tray_show_action.setText("Mostra")
+
+    def _quit_app(self):
+        self._tray_icon.hide()
+        QApplication.quit()
+
+    def closeEvent(self, event):
+        # Hide to tray instead of quitting
+        event.ignore()
+        self.hide()
 
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() != QEvent.Type.WindowStateChange:
             return
+
+        if hasattr(self, '_tray_icon'):
+            self._update_tray_text()
 
         if self.isMinimized():
             # Minimized: if recording/transcribing, show compact pill
@@ -277,11 +336,9 @@ class PillWidget(QWidget):
                 self._compact_mode = True
                 self._compact_pill.set_bg_color(self._bg_color)
                 self._compact_pill.start_recording()
-                # Sync the compact pill's start time and waveform
                 self._compact_pill._recording_start = self._recording_start
                 self._compact_pill._waveform_history = list(self._waveform_history)
                 self._compact_pill._current_amplitude = self._current_amplitude
-                # Connect amplitude feed
                 if self._recorder:
                     self._recorder.amplitude.connect(self._compact_pill.on_amplitude)
                 self._trash_btn.hide()
@@ -293,30 +350,31 @@ class PillWidget(QWidget):
         else:
             # Restored: hide compact pill, show normal UI
             if self._compact_mode:
-                was_recording = self._compact_pill._state == "recording"
                 self._compact_pill.stop()
                 self._compact_mode = False
-                # Disconnect amplitude from compact pill
                 if self._recorder:
                     try:
                         self._recorder.amplitude.disconnect(self._compact_pill.on_amplitude)
                     except TypeError:
                         pass
-                # Show trash if still recording
                 if self._state == "recording":
                     self._trash_btn.show()
                 self.update()
 
-    def _run_startup_glow(self):
-        from PyQt6.QtCore import QPropertyAnimation
-        anim = QPropertyAnimation(self, b"startupGlowOpacity")
-        anim.setDuration(1800)
-        anim.setKeyValueAt(0.0, 0)
-        anim.setKeyValueAt(0.15, 140)
-        anim.setKeyValueAt(0.5, 80)
-        anim.setKeyValueAt(1.0, 0)
-        self._startup_anim = anim
-        anim.start()
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._our_hwnd = int(self.winId())
+        if hasattr(self, '_tray_icon'):
+            self._update_tray_text()
+        # One-time startup glow to help locate the pill
+        if not hasattr(self, '_startup_done'):
+            self._startup_done = True
+            self._run_startup_glow()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, '_tray_icon'):
+            self._update_tray_text()
 
     def _start_focus_tracker(self):
         self._focus_timer = QTimer(self)
@@ -362,7 +420,7 @@ class PillWidget(QWidget):
             if not self._api_key:
                 return
             self._previous_hwnd = self._last_external_hwnd
-            if self.isMinimized():
+            if self.isMinimized() or not self.isVisible():
                 self._start_compact_recording()
             else:
                 self._toggle_recording()
@@ -708,7 +766,7 @@ class PillWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def _is_on_controls(self, pos: QPoint) -> bool:
-        for btn in (self._close_btn, self._min_btn, self._gear_btn, self._trash_btn):
+        for btn in (self._close_btn, self._gear_btn, self._trash_btn):
             if btn.geometry().contains(pos):
                 return True
         return False
@@ -835,7 +893,7 @@ class PillWidget(QWidget):
 
     def _deliver_result(self, text: str):
         self._stop_bg_pulse()
-        pyperclip.copy(text + " ")
+        pyperclip.copy(text)
 
         # Save to history
         save_transcription(text, self._recording_duration)

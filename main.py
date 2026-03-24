@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 
-from utils.config import load_api_key
+from utils.config import load_api_key, load_start_minimized
 from ui.pill_widget import PillWidget
 
 
@@ -18,7 +18,7 @@ def resource_path(relative: str) -> str:
 
 def main():
     app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(True)
+    app.setQuitOnLastWindowClosed(False)
 
     # Try PNG first (higher quality), fall back to ICO
     icon_path = resource_path(os.path.join("assets", "icon.png"))
@@ -37,7 +37,8 @@ def main():
 
     api_key = load_api_key()
     pill = PillWidget(api_key=api_key)
-    pill.show()
+    if not load_start_minimized():
+        pill.show()
 
     sys.exit(app.exec())
 
