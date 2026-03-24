@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 GITHUB_REPO = "sonkase/Whisper"
 
 
@@ -165,16 +165,30 @@ try {{
         Start-Sleep -Seconds 2
     }}
 }} catch {{}}
-Start-Sleep -Seconds 1
-for ($i = 0; $i -lt 5; $i++) {{
+
+# Wait until the exe file is fully released
+for ($i = 0; $i -lt 10; $i++) {{
     try {{
-        Copy-Item -Path '{new_exe_path}' -Destination '{current_exe}' -Force
+        $fs = [System.IO.File]::Open('{current_exe}', 'Open', 'ReadWrite', 'None')
+        $fs.Close()
         break
     }} catch {{
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds 500
     }}
 }}
+
+# Rename old exe out of the way, then copy new one in
+$oldBackup = '{current_exe}.old'
+Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
+Rename-Item -Path '{current_exe}' -NewName $oldBackup -Force -ErrorAction SilentlyContinue
+Copy-Item -Path '{new_exe_path}' -Destination '{current_exe}' -Force
+
+# Clean stale _MEI directories from old process
+Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+Start-Sleep -Seconds 1
 Start-Process '{current_exe}'
+Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
 Remove-Item '{new_exe_path}' -ErrorAction SilentlyContinue
 Remove-Item '{ps_path}' -ErrorAction SilentlyContinue
 '''
