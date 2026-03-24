@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.2.9"
+APP_VERSION = "1.2.10"
 GITHUB_REPO = "sonkase/Whisper"
 
 
@@ -141,11 +141,14 @@ class UpdateDownloader(QThread):
 def apply_update_and_restart(new_exe_path: str):
     """Replace the current exe with the new one and relaunch.
 
-    Creates a small batch script that:
-    1. Waits for the current process to exit
-    2. Replaces the old exe
-    3. Launches the new exe
-    4. Deletes itself
+    Creates a PowerShell script that:
+    1. Waits for the current process to fully exit
+    2. Cleans stale _MEI dirs left by the old process
+    3. Removes the internet Zone.Identifier from the new exe
+    4. Replaces the old exe with the new one
+    5. Relaunches via explorer.exe (mimics user double-click to avoid
+       Windows Defender blocking extracted DLLs on first launch)
+    6. Cleans up temp files
     """
     current_exe = _exe_path()
 
@@ -155,19 +158,19 @@ def apply_update_and_restart(new_exe_path: str):
 
     pid = os.getpid()
 
-    # PowerShell script — hidden, waits for process to die, copies exe, relaunches
     ps_fd, ps_path = tempfile.mkstemp(suffix=".ps1", prefix="whisper_updater_")
     ps_content = f'''
+# 1. Wait for the old process to fully terminate
 try {{
     $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
     if ($proc) {{
         $proc.WaitForExit(30000)
-        Start-Sleep -Seconds 2
     }}
 }} catch {{}}
+Start-Sleep -Seconds 2
 
-# Wait until the exe file is fully released
-for ($i = 0; $i -lt 10; $i++) {{
+# 2. Wait until the exe file handle is fully released
+for ($i = 0; $i -lt 20; $i++) {{
     try {{
         $fs = [System.IO.File]::Open('{current_exe}', 'Open', 'ReadWrite', 'None')
         $fs.Close()
@@ -177,17 +180,32 @@ for ($i = 0; $i -lt 10; $i++) {{
     }}
 }}
 
-# Rename old exe out of the way, then copy new one in
+# 3. Clean stale _MEI directories BEFORE replacing the exe
+#    (old process used os._exit so its _MEI was not cleaned up)
+Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+
+# 4. Remove internet Zone.Identifier from downloaded exe to prevent
+#    Windows Defender from aggressively scanning extracted DLLs
+Unblock-File -Path '{new_exe_path}' -ErrorAction SilentlyContinue
+
+# 5. Rename old exe out of the way, then copy new one in
 $oldBackup = '{current_exe}.old'
 Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
 Rename-Item -Path '{current_exe}' -NewName $oldBackup -Force -ErrorAction SilentlyContinue
 Copy-Item -Path '{new_exe_path}' -Destination '{current_exe}' -Force
 
-# Clean stale _MEI directories from old process
-Get-ChildItem -Path $env:TEMP -Filter "_MEI*" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+# 6. Remove Zone.Identifier from the final exe path too
+Unblock-File -Path '{current_exe}' -ErrorAction SilentlyContinue
 
-Start-Sleep -Seconds 1
-Start-Process '{current_exe}'
+# 7. Wait for filesystem to settle, then launch via explorer.exe
+#    explorer.exe mimics a user double-click — same security context
+#    that works when the user opens the exe manually
+Start-Sleep -Seconds 2
+Start-Process explorer.exe -ArgumentList '{current_exe}'
+
+# 8. Cleanup temp files
+Start-Sleep -Seconds 3
 Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
 Remove-Item '{new_exe_path}' -ErrorAction SilentlyContinue
 Remove-Item '{ps_path}' -ErrorAction SilentlyContinue
@@ -203,7 +221,9 @@ Remove-Item '{ps_path}' -ErrorAction SilentlyContinue
         close_fds=True,
     )
 
-    # Exit the app
-    from PyQt6.QtWidgets import QApplication
-    QApplication.quit()
-    return True
+    # Force-kill the process immediately with os._exit().
+    # QApplication.quit() triggers a graceful shutdown where PyInstaller's
+    # atexit handler races to clean up _MEI — this can interfere with the
+    # new process's extraction. os._exit() skips all cleanup, leaving the
+    # _MEI dir for the PowerShell script to clean up safely.
+    os._exit(0)
