@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 
-from utils.config import load_api_key, load_start_minimized
+from utils.config import load_api_key
 from ui.pill_widget import PillWidget
 
 
@@ -37,8 +37,7 @@ def main():
 
     api_key = load_api_key()
     pill = PillWidget(api_key=api_key)
-    if not load_start_minimized():
-        pill.show()
+    # App starts in tray — double-click tray icon to open settings
 
     sys.exit(app.exec())
 

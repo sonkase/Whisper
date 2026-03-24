@@ -23,10 +23,11 @@ from utils.config import (
     load_post_processing, save_post_processing,
     load_paste_sound, save_paste_sound,
     load_start_minimized, save_start_minimized,
-    load_github_repo, save_github_repo,
+    load_auto_update, save_auto_update,
 )
 from core.updater import (
-    APP_VERSION, UpdateChecker, UpdateDownloader, apply_update_and_restart,
+    APP_VERSION, GITHUB_REPO, UpdateChecker, UpdateDownloader,
+    apply_update_and_restart,
 )
 
 try:
@@ -383,15 +384,17 @@ class SettingsPanel(QWidget):
     theme_changed = pyqtSignal(str)
     shortcuts_changed = pyqtSignal(dict)
 
-    TARGET_HEIGHT = 840
-    MESSAGE_HEIGHT = 840
+    TARGET_HEIGHT = 720
+    MESSAGE_HEIGHT = 720
 
-    def __init__(self, parent: QWidget, theme_name: str = "Midnight"):
+    def __init__(self, parent: QWidget, theme_name: str = "Midnight",
+                 embedded: bool = False):
         super().__init__(parent)
         self._panel_height = 0
         self._anim = None
         self._fade_anim = None
         self._current_theme = theme_name
+        self._embedded = embedded
         self._in_message_view = False
         self._full_history = []
         self.setFixedHeight(0)
@@ -456,20 +459,14 @@ class SettingsPanel(QWidget):
         ml.addLayout(key_layout)
         self._key_input.textChanged.connect(self._auto_save_key)
 
-        # Theme + Autostart row
-        row2 = QHBoxLayout()
-        row2.setSpacing(12)
-        theme_col = QVBoxLayout()
-        theme_col.setSpacing(4)
+        # Theme (single row)
         theme_label = QLabel("Tema")
         theme_label.setStyleSheet("color: rgba(255,255,255,0.55); font-size: 13px;")
-        theme_col.addWidget(theme_label)
+        ml.addWidget(theme_label)
+        theme_row = QHBoxLayout()
+        theme_row.setSpacing(8)
         self._theme_btns = {}
-        theme_row1 = QHBoxLayout()
-        theme_row1.setSpacing(8)
-        theme_row2 = QHBoxLayout()
-        theme_row2.setSpacing(8)
-        for i, name in enumerate(THEME_ORDER):
+        for name in THEME_ORDER:
             btn = QPushButton(self)
             btn.setFixedSize(24, 24)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -477,23 +474,14 @@ class SettingsPanel(QWidget):
             is_sel = name == self._current_theme
             btn.setStyleSheet(self._theme_btn_style(THEME_PREVIEW[name], is_sel))
             btn.clicked.connect(lambda ch, n=name: self._select_theme(n))
-            if i < 4:
-                theme_row1.addWidget(btn)
-            else:
-                theme_row2.addWidget(btn)
+            theme_row.addWidget(btn)
             self._theme_btns[name] = btn
-        theme_row2.addStretch()
-        theme_col.addLayout(theme_row1)
-        theme_col.addLayout(theme_row2)
-        row2.addLayout(theme_col)
-        row2.addStretch()
+        theme_row.addStretch()
+        ml.addLayout(theme_row)
 
-        autostart_col = QVBoxLayout()
-        autostart_col.setSpacing(4)
-        self._autostart_cb = QCheckBox("Avvia all'avvio di Windows")
-        self._autostart_cb.setChecked(self._is_autostart_enabled())
+        # Options grid (2 columns)
         check_img = _create_check_icon_path()
-        self._autostart_cb.setStyleSheet(f"""
+        cb_style = f"""
             QCheckBox {{ color: rgba(255,255,255,0.6); font-size: 12px; spacing: 6px; }}
             QCheckBox::indicator {{
                 width: 14px; height: 14px;
@@ -506,69 +494,45 @@ class SettingsPanel(QWidget):
                 image: url({check_img});
             }}
             QCheckBox::indicator:hover {{ border: 1px solid rgba(255,255,255,0.5); }}
-        """)
+        """
+
+        from PyQt6.QtWidgets import QGridLayout
+        opts_grid = QGridLayout()
+        opts_grid.setSpacing(4)
+        opts_grid.setColumnStretch(0, 1)
+        opts_grid.setColumnStretch(1, 1)
+
+        self._autostart_cb = QCheckBox("Avvio con Windows")
+        self._autostart_cb.setChecked(self._is_autostart_enabled())
+        self._autostart_cb.setStyleSheet(cb_style)
         self._autostart_cb.toggled.connect(self._toggle_autostart)
-        autostart_col.addWidget(self._autostart_cb)
+        opts_grid.addWidget(self._autostart_cb, 0, 0)
 
         self._pp_cb = QCheckBox("Correggi testo con AI")
         self._pp_cb.setChecked(load_post_processing())
-        self._pp_cb.setStyleSheet(f"""
-            QCheckBox {{ color: rgba(255,255,255,0.6); font-size: 12px; spacing: 6px; }}
-            QCheckBox::indicator {{
-                width: 14px; height: 14px;
-                border: 1px solid rgba(255,255,255,0.3);
-                border-radius: 3px; background: rgba(255,255,255,0.06);
-            }}
-            QCheckBox::indicator:checked {{
-                background: rgba(255,255,255,0.06);
-                border: 1px solid rgba(255,255,255,0.5);
-                image: url({check_img});
-            }}
-            QCheckBox::indicator:hover {{ border: 1px solid rgba(255,255,255,0.5); }}
-        """)
+        self._pp_cb.setStyleSheet(cb_style)
         self._pp_cb.toggled.connect(save_post_processing)
-        autostart_col.addWidget(self._pp_cb)
-
-        self._sound_cb = QCheckBox("Suono dopo incolla")
-        self._sound_cb.setChecked(load_paste_sound())
-        self._sound_cb.setStyleSheet(f"""
-            QCheckBox {{ color: rgba(255,255,255,0.6); font-size: 12px; spacing: 6px; }}
-            QCheckBox::indicator {{
-                width: 14px; height: 14px;
-                border: 1px solid rgba(255,255,255,0.3);
-                border-radius: 3px; background: rgba(255,255,255,0.06);
-            }}
-            QCheckBox::indicator:checked {{
-                background: rgba(255,255,255,0.06);
-                border: 1px solid rgba(255,255,255,0.5);
-                image: url({check_img});
-            }}
-            QCheckBox::indicator:hover {{ border: 1px solid rgba(255,255,255,0.5); }}
-        """)
-        self._sound_cb.toggled.connect(save_paste_sound)
-        autostart_col.addWidget(self._sound_cb)
+        opts_grid.addWidget(self._pp_cb, 0, 1)
 
         self._start_min_cb = QCheckBox("Avvia minimizzata")
         self._start_min_cb.setChecked(load_start_minimized())
-        self._start_min_cb.setStyleSheet(f"""
-            QCheckBox {{ color: rgba(255,255,255,0.6); font-size: 12px; spacing: 6px; }}
-            QCheckBox::indicator {{
-                width: 14px; height: 14px;
-                border: 1px solid rgba(255,255,255,0.3);
-                border-radius: 3px; background: rgba(255,255,255,0.06);
-            }}
-            QCheckBox::indicator:checked {{
-                background: rgba(255,255,255,0.06);
-                border: 1px solid rgba(255,255,255,0.5);
-                image: url({check_img});
-            }}
-            QCheckBox::indicator:hover {{ border: 1px solid rgba(255,255,255,0.5); }}
-        """)
+        self._start_min_cb.setStyleSheet(cb_style)
         self._start_min_cb.toggled.connect(save_start_minimized)
-        autostart_col.addWidget(self._start_min_cb)
+        opts_grid.addWidget(self._start_min_cb, 1, 0)
 
-        row2.addLayout(autostart_col)
-        ml.addLayout(row2)
+        self._sound_cb = QCheckBox("Suono dopo incolla")
+        self._sound_cb.setChecked(load_paste_sound())
+        self._sound_cb.setStyleSheet(cb_style)
+        self._sound_cb.toggled.connect(save_paste_sound)
+        opts_grid.addWidget(self._sound_cb, 1, 1)
+
+        self._autoupdate_cb = QCheckBox("Aggiornamento auto")
+        self._autoupdate_cb.setChecked(load_auto_update())
+        self._autoupdate_cb.setStyleSheet(cb_style)
+        self._autoupdate_cb.toggled.connect(save_auto_update)
+        opts_grid.addWidget(self._autoupdate_cb, 2, 0)
+
+        ml.addLayout(opts_grid)
 
         # Separator
         ml.addSpacing(4)
@@ -760,7 +724,7 @@ class SettingsPanel(QWidget):
     # ------------------------------------------------------------------ #
 
     def paintEvent(self, event):
-        if self._panel_height <= 1:
+        if self._embedded or self._panel_height <= 1:
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -777,6 +741,12 @@ class SettingsPanel(QWidget):
 
     def set_api_key(self, key: str):
         self._key_input.setText(key)
+
+    def show_embedded(self):
+        """Display at full height without animation (embedded mode)."""
+        self._panel_height = self.TARGET_HEIGHT
+        self.setFixedHeight(self.TARGET_HEIGHT)
+        self.show()
 
     def slide_open(self):
         self.refresh_data()
@@ -963,29 +933,6 @@ class SettingsPanel(QWidget):
         layout.addWidget(update_label)
         self._version_label = update_label
 
-        repo_row = QHBoxLayout()
-        repo_row.setSpacing(6)
-        repo_lbl = QLabel("Repository GitHub")
-        repo_lbl.setStyleSheet("color: rgba(255,255,255,0.5); font-size: 11px;")
-        repo_row.addWidget(repo_lbl)
-        self._repo_input = QLineEdit()
-        self._repo_input.setPlaceholderText("utente/repo")
-        self._repo_input.setText(load_github_repo())
-        self._repo_input.setFixedHeight(26)
-        self._repo_input.setStyleSheet("""
-            QLineEdit {
-                background: rgba(255,255,255,0.08);
-                border: 1px solid rgba(255,255,255,0.12);
-                border-radius: 4px; color: #e0e0e0;
-                padding: 0 8px; font-size: 11px;
-            }
-            QLineEdit:focus { border: 1px solid rgba(255,255,255,0.3); }
-        """)
-        self._repo_input.textChanged.connect(
-            lambda t: save_github_repo(t.strip()))
-        repo_row.addWidget(self._repo_input)
-        layout.addLayout(repo_row)
-
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         self._check_update_btn = QPushButton("Controlla aggiornamenti")
@@ -1059,20 +1006,13 @@ class SettingsPanel(QWidget):
         self._pending_tag = ""
 
     def _check_for_updates(self):
-        repo = self._repo_input.text().strip()
-        if not repo:
-            self._update_status.setText("Inserisci il repository GitHub")
-            self._update_status.setStyleSheet(
-                "color: rgba(255,180,80,0.8); font-size: 11px;")
-            return
-
         self._check_update_btn.setEnabled(False)
         self._update_status.setText("Controllo in corso...")
         self._update_status.setStyleSheet(
             "color: rgba(255,255,255,0.5); font-size: 11px;")
         self._install_btn.hide()
 
-        self._update_checker = UpdateChecker(repo, self)
+        self._update_checker = UpdateChecker(GITHUB_REPO, self)
         self._update_checker.update_available.connect(self._on_update_available)
         self._update_checker.no_update.connect(self._on_no_update)
         self._update_checker.error.connect(self._on_update_error)

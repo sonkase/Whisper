@@ -9,3 +9,6 @@ build/
 *.exe
 .vscode/
 .idea/
+.claude/
+CLAUDE.md
+TODO.md
