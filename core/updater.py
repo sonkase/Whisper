@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 GITHUB_REPO = "sonkase/Whisper"
 
 
