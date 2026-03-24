@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 GITHUB_REPO = "sonkase/Whisper"
 
 
@@ -155,38 +155,37 @@ def apply_update_and_restart(new_exe_path: str):
 
     pid = os.getpid()
 
-    # VBScript wrapper — runs completely hidden, then launches the new exe
-    vbs_fd, vbs_path = tempfile.mkstemp(suffix=".vbs", prefix="whisper_updater_")
-    bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="whisper_updater_")
-
-    bat_content = f'''@echo off
-:wait
-tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
-if not errorlevel 1 (
-    ping -n 2 127.0.0.1 >nul
-    goto wait
-)
-ping -n 2 127.0.0.1 >nul
-move /y "{new_exe_path}" "{current_exe}"
-if errorlevel 1 (
-    ping -n 3 127.0.0.1 >nul
-    move /y "{new_exe_path}" "{current_exe}"
-)
-start "" "{current_exe}"
-del "{vbs_path}"
-del "%~f0"
+    # PowerShell script — hidden, waits for process to die, copies exe, relaunches
+    ps_fd, ps_path = tempfile.mkstemp(suffix=".ps1", prefix="whisper_updater_")
+    ps_content = f'''
+try {{
+    $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
+    if ($proc) {{
+        $proc.WaitForExit(30000)
+        Start-Sleep -Seconds 2
+    }}
+}} catch {{}}
+Start-Sleep -Seconds 1
+for ($i = 0; $i -lt 5; $i++) {{
+    try {{
+        Copy-Item -Path '{new_exe_path}' -Destination '{current_exe}' -Force
+        break
+    }} catch {{
+        Start-Sleep -Seconds 2
+    }}
+}}
+Start-Process '{current_exe}'
+Remove-Item '{new_exe_path}' -ErrorAction SilentlyContinue
+Remove-Item '{ps_path}' -ErrorAction SilentlyContinue
 '''
 
-    vbs_content = f'CreateObject("WScript.Shell").Run """" & "{bat_path}" & """", 0, False'
-
-    with os.fdopen(bat_fd, "w") as f:
-        f.write(bat_content)
-    with os.fdopen(vbs_fd, "w") as f:
-        f.write(vbs_content)
+    with os.fdopen(ps_fd, "w") as f:
+        f.write(ps_content)
 
     subprocess.Popen(
-        ["wscript.exe", vbs_path],
-        creationflags=0x00000008,  # DETACHED_PROCESS
+        ["powershell.exe", "-ExecutionPolicy", "Bypass",
+         "-WindowStyle", "Hidden", "-File", ps_path],
+        creationflags=0x08000000,  # CREATE_NO_WINDOW
         close_fds=True,
     )
 
